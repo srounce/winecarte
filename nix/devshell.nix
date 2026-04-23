@@ -1,18 +1,15 @@
 { pkgs, system, flake, ... }:
+let
+  mingw = pkgs.pkgsCross.mingwW64;
+in
 pkgs.mkShell {
-  # Add build dependencies
   packages = [
     (flake.lib.mkRustToolchain system)
-  ] ++ (with pkgs.pkgsCross.mingwW64; [
-    stdenv.cc
-    windows.pthreads
-  ]);
+    pkgs.just
+    mingw.stdenv.cc
+  ];
 
-  # Add environment variables
-  env = { };
-
-  # Load custom bash code
-  shellHook = ''
-
-  '';
+  depsTargetTarget = [
+    mingw.windows.pthreads
+  ];
 }
