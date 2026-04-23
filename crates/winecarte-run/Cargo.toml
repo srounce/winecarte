@@ -1,0 +1,23 @@
+[package]
+name = "winecarte-run"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = [ "derive" ] }
+tokio-stream = "0.1"
+async-trait = "0.1"
+vdf = { path = "../vdf" }
+env_logger = "0.11.10"
+log = "0.4.29"
+
+[dependencies.tokio]
+version = "1"
+features = ["rt", "macros", "rt-multi-thread", "fs", "process", "io-std", "io-util"]
+
+[dependencies.tokio-util]
+version="0.7.7"
+features = ["codec", "io"]
+
