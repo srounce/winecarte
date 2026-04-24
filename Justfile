@@ -47,7 +47,7 @@ _build target profile="debug":
     cargo build --manifest-path {{cargo_manifest}} --package "${package}" --bin "${bin}" --target {{windows_target}} "${profile_flag[@]}"
   else
     echo "==> building {{target}} for host ({{host_target}}) [{{profile}}]"
-    cargo build --manifest-path {{cargo_manifest}} --package "${package}" --bin "${bin}" "${profile_flag[@]}"
+    cargo build --manifest-path {{cargo_manifest}} --package "${package}" --bin "${bin}" --target {{host_arch}}-unknown-linux-musl "${profile_flag[@]}"
   fi
 
 [arg("release", long, value="release")]
