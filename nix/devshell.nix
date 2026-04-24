@@ -6,6 +6,7 @@ pkgs.mkShell {
   packages = [
     (flake.lib.mkRustToolchain system)
     pkgs.just
+    pkgs.python3
     mingw.stdenv.cc
   ];
 

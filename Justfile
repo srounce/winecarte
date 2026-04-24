@@ -20,7 +20,7 @@ clean:
 [private]
 _build target profile="debug":
   #!/usr/bin/env bash
-  set -eu -o pipefail
+  set -x -eu -o pipefail
   case "{{target}}" in
     *:*) ;;
     *)

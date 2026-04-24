@@ -658,6 +658,14 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 [[package]]
 name = "wine2linux"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "env_logger",
+ "log",
+ "thiserror",
+ "windows-sys 0.59.0",
+]
 
 [[package]]
 name = "winecarte-run"

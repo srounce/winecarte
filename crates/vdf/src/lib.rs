@@ -1,5 +1,5 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename = "libraryfolders")]
@@ -20,7 +20,6 @@ pub struct LibraryFolder {
 
 #[derive(Eq, PartialEq, Hash, Serialize, Deserialize, Debug)]
 pub struct SteamAppId(String);
-
 
 #[cfg(test)]
 mod tests {
@@ -70,7 +69,7 @@ mod tests {
                         (SteamAppId("3917090".into()), 20516889067),
                         (SteamAppId("4183110".into()), 645023192),
                     ]),
-                }
+                },
             ),
         ]));
         let serialized = vdf_serde::to_string(&result).unwrap();
@@ -83,7 +82,11 @@ mod tests {
     fn it_really_works() {
         let home_dir_path = std::env::home_dir().unwrap();
         let home_dir = home_dir_path.to_str().unwrap();
-        let input = read_to_string(format!("{}/.local/share/Steam/config/libraryfolders.vdf", home_dir)).unwrap();
+        let input = read_to_string(format!(
+            "{}/.local/share/Steam/config/libraryfolders.vdf",
+            home_dir
+        ))
+        .unwrap();
         let deserialized: SteamLibraryFolders = vdf_serde::from_str(&input).unwrap();
         println!("{deserialized:#?}");
 
