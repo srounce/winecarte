@@ -153,6 +153,7 @@ async fn main() -> anyhow::Result<()> {
     let mut command = process::Command::new(startup_command.first().unwrap());
     command
         .args(startup_args)
+        .env("STEAM_COMPAT_LAUNCHER_SERVICE", "proton")
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
