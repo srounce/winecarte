@@ -1,6 +1,7 @@
 use anyhow::{Context, bail};
 use clap::Parser;
 use std::{
+    env,
     path::PathBuf,
     process::{Command as StdCommand, Stdio},
     str, thread,
@@ -63,6 +64,19 @@ fn print_env() {
     for (key, value) in vars {
         println!("env: {key} => {value}");
     }
+}
+
+fn find_on_path(program: &str) -> Option<PathBuf> {
+    let path = env::var_os("PATH")?;
+
+    env::split_paths(&path).find_map(|dir| {
+        let candidate = dir.join(program);
+        if candidate.is_file() {
+            Some(candidate)
+        } else {
+            None
+        }
+    })
 }
 
 #[tokio::main]
@@ -215,6 +229,10 @@ impl LeMansUltimateHandler {
     }
 
     fn resolve_wine2linux_exe() -> anyhow::Result<PathBuf> {
+        if let Some(path) = find_on_path("wine2linux.exe") {
+            return Ok(path);
+        }
+
         if let Some(path) = std::env::var_os("WINECARTE_WINE2LINUX_EXE") {
             let path = PathBuf::from(path);
             if path.exists() {
@@ -225,9 +243,9 @@ impl LeMansUltimateHandler {
                 "WINECARTE_WINE2LINUX_EXE points to a missing path: {}",
                 path.display()
             );
-        } else {
-            bail!("WINECARTE_WINE2LINUX_EXE not specified!");
         }
+
+        bail!("could not find wine2linux.exe on PATH; set WINECARTE_WINE2LINUX_EXE")
     }
 
     fn game_is_alive(&self, context: &AppContext) -> anyhow::Result<bool> {
