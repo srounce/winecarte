@@ -22,15 +22,11 @@ struct Args {
 
 #[derive(Error, Debug)]
 enum StartupError {
-    #[error("Provided statup command was invalid")]
-    InvalidStartupCommand,
     #[error("No startup command provided")]
     MissingStartupCommand,
 
     #[error("No Steam AppId provided")]
     MissingAppId,
-    #[error("Invalid AppId provided")]
-    InvalidAppId,
     #[error("Unsupported AppId provided: {0}")]
     UnsupportedAppId(String),
 
@@ -55,14 +51,6 @@ fn get_handler(appid: &str) -> Result<Box<dyn AppHandler>, StartupError> {
     match appid {
         "2399420" => Ok(Box::new(LeMansUltimateHandler::default())),
         _ => Err(StartupError::UnsupportedAppId(appid.to_string())),
-    }
-}
-
-fn print_env() {
-    let mut vars = std::env::vars().collect::<Vec<_>>();
-    vars.sort_by_key(|(key, _)| key.to_lowercase());
-    for (key, value) in vars {
-        println!("env: {key} => {value}");
     }
 }
 
@@ -301,7 +289,6 @@ impl AppHandler for LeMansUltimateHandler {
                 .arg("LMU_Data")
                 .arg("--event")
                 .arg("LMU_Data_Event")
-                .arg("--lmu-lock")
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit())
                 .env("STEAM_COMPAT_DATA_PATH", &context.compat_data_path);
