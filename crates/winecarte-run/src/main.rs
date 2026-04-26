@@ -14,7 +14,7 @@ use tokio::process;
 #[command(version, about)]
 struct Args {
     #[arg(short = 'i', long)]
-    appid: Option<usize>,
+    appid: Option<String>,
 
     #[arg(required(true), last(false), trailing_var_arg(true))]
     startup_command: Vec<String>,
@@ -44,7 +44,8 @@ enum StartupError {
 struct AppContext {
     compat_data_path: PathBuf,
     steam_linux_runtime_path: PathBuf,
-    appid: String,
+    handler_appid: String,
+    steam_appid: String,
 }
 
 fn get_handler(appid: &str) -> Result<Box<dyn AppHandler>, StartupError> {
@@ -79,7 +80,8 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
 
-    let appid = std::env::var("SteamAppId").map_err(|_| StartupError::MissingAppId)?;
+    let steam_appid = std::env::var("SteamAppId").map_err(|_| StartupError::MissingAppId)?;
+    let handler_appid = args.appid.clone().unwrap_or_else(|| steam_appid.clone());
 
     let compat_data_path = std::env::var("STEAM_COMPAT_DATA_PATH")
         .map_err(|_| StartupError::MissingCompatDataPath)
@@ -109,7 +111,8 @@ async fn main() -> anyhow::Result<()> {
             Ok((compat_tool_path, steam_linux_runtime_path))
         })?;
 
-    log::info!("Wrapping AppId: {appid}");
+    log::info!("Wrapping handler AppId: {handler_appid}");
+    log::info!("Steam AppId: {steam_appid}");
     log::info!(
         "Proton path: {}",
         compat_tool_path.to_str().unwrap_or_default()
@@ -126,10 +129,11 @@ async fn main() -> anyhow::Result<()> {
     let context = AppContext {
         compat_data_path,
         steam_linux_runtime_path,
-        appid,
+        handler_appid,
+        steam_appid,
     };
 
-    let mut handler = get_handler(&context.appid)?;
+    let mut handler = get_handler(&context.handler_appid)?;
     handler.setup(&context)?;
 
     if args.startup_command.is_empty() {
@@ -177,14 +181,53 @@ trait AppHandler {
     }
 }
 
-#[derive(Default)]
 struct LeMansUltimateHandler {
     wine2linux_process: Option<process::Child>,
+}
+
+impl Default for LeMansUltimateHandler {
+    fn default() -> Self {
+        Self {
+            wine2linux_process: None,
+        }
+    }
 }
 
 impl LeMansUltimateHandler {
     const GAME_PROCESS_MARKERS: [&'static str; 2] =
         ["Le Mans Ultimate.exe", "start_protected_game.exe"];
+    const WINE2LINUX_ARGS: [&'static str; 30] = [
+        "--from-wine",
+        "LMU_Data",
+        "--event",
+        "LMU_Data_Event",
+        "--from-wine",
+        "$rFactor2SMMP_Telemetry$",
+        "--from-wine",
+        "$rFactor2SMMP_Scoring$",
+        "--from-wine",
+        "$rFactor2SMMP_Rules$",
+        "--from-wine",
+        "$rFactor2SMMP_MultiRules$",
+        "--from-wine",
+        "$rFactor2SMMP_ForceFeedback$",
+        "--from-wine",
+        "$rFactor2SMMP_Graphics$",
+        "--from-wine",
+        "$rFactor2SMMP_Extended$",
+        "--from-wine",
+        "$rFactor2SMMP_PitInfo$",
+        "--from-wine",
+        "$rFactor2SMMP_Weather$",
+        "--from-wine",
+        "$rFactor2SMMP_HWControl$",
+        "--from-wine",
+        "$rFactor2SMMP_WeatherControl$",
+        "--from-wine",
+        "$rFactor2SMMP_RulesControl$",
+        "--from-wine",
+        "$rFactor2SMMP_PluginControl$",
+    ];
 
     fn resolve_runtime_launch_client(context: &AppContext) -> anyhow::Result<PathBuf> {
         if let Some(path) = std::env::var_os("WINECARTE_RUNTIME_LAUNCH_CLIENT") {
@@ -239,7 +282,7 @@ impl LeMansUltimateHandler {
 
     fn game_is_alive(&self, context: &AppContext) -> anyhow::Result<bool> {
         let runtime_launch_client = Self::resolve_runtime_launch_client(context)?;
-        let bus_name = format!("com.steampowered.App{}", context.appid);
+        let bus_name = format!("com.steampowered.App{}", context.steam_appid);
 
         let output = StdCommand::new(runtime_launch_client)
             .arg("--bus-name")
@@ -267,13 +310,11 @@ impl LeMansUltimateHandler {
                 && !line.contains("wine2linux.exe")
         }))
     }
-}
 
-impl AppHandler for LeMansUltimateHandler {
     fn on_start(&mut self, context: &AppContext) -> anyhow::Result<()> {
         let runtime_launch_client = Self::resolve_runtime_launch_client(context)?;
         let wine2linux_exe = Self::resolve_wine2linux_exe()?;
-        let bus_name = format!("com.steampowered.App{}", context.appid);
+        let bus_name = format!("com.steampowered.App{}", context.steam_appid);
         let retry_deadline = std::time::Instant::now() + Duration::from_secs(10);
 
         loop {
@@ -285,10 +326,7 @@ impl AppHandler for LeMansUltimateHandler {
                 .arg("--")
                 .arg("wine")
                 .arg(&wine2linux_exe)
-                .arg("--map")
-                .arg("LMU_Data")
-                .arg("--event")
-                .arg("LMU_Data_Event")
+                .args(Self::WINE2LINUX_ARGS)
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit())
                 .env("STEAM_COMPAT_DATA_PATH", &context.compat_data_path);
@@ -340,5 +378,19 @@ Make sure Steam launch options include STEAM_COMPAT_LAUNCHER_SERVICE=proton",
         }
 
         Ok(())
+    }
+}
+
+impl AppHandler for LeMansUltimateHandler {
+    fn on_start(&mut self, context: &AppContext) -> anyhow::Result<()> {
+        LeMansUltimateHandler::on_start(self, context)
+    }
+
+    fn cleanup(&mut self, context: &AppContext) -> anyhow::Result<()> {
+        LeMansUltimateHandler::cleanup(self, context)
+    }
+
+    fn wait_for_game_exit(&mut self, context: &AppContext) -> anyhow::Result<()> {
+        LeMansUltimateHandler::wait_for_game_exit(self, context)
     }
 }
