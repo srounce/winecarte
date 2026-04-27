@@ -1,14 +1,11 @@
-use anyhow::{Context, bail};
+use anyhow::Context;
 use clap::Parser;
-use std::{
-    env,
-    path::PathBuf,
-    process::{Command as StdCommand, Stdio},
-    str, thread,
-    time::Duration,
-};
+use std::{env, path::PathBuf, process::Stdio};
 use thiserror::Error;
 use tokio::process;
+
+mod handlers;
+use handlers::get_handler;
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -48,14 +45,7 @@ struct AppContext {
     steam_appid: String,
 }
 
-fn get_handler(appid: &str) -> Result<Box<dyn AppHandler>, StartupError> {
-    match appid {
-        "2399420" => Ok(Box::new(LeMansUltimateHandler::default())),
-        _ => Err(StartupError::UnsupportedAppId(appid.to_string())),
-    }
-}
-
-fn find_on_path(program: &str) -> Option<PathBuf> {
+pub(crate) fn find_on_path(program: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH")?;
 
     env::split_paths(&path).find_map(|dir| {
@@ -178,219 +168,5 @@ trait AppHandler {
 
     fn wait_for_game_exit(&mut self, _context: &AppContext) -> anyhow::Result<()> {
         Ok(())
-    }
-}
-
-struct LeMansUltimateHandler {
-    wine2linux_process: Option<process::Child>,
-}
-
-impl Default for LeMansUltimateHandler {
-    fn default() -> Self {
-        Self {
-            wine2linux_process: None,
-        }
-    }
-}
-
-impl LeMansUltimateHandler {
-    const GAME_PROCESS_MARKERS: [&'static str; 2] =
-        ["Le Mans Ultimate.exe", "start_protected_game.exe"];
-    const WINE2LINUX_ARGS: [&'static str; 30] = [
-        "--from-wine",
-        "LMU_Data",
-        "--event",
-        "LMU_Data_Event",
-        "--from-wine",
-        "$rFactor2SMMP_Telemetry$",
-        "--from-wine",
-        "$rFactor2SMMP_Scoring$",
-        "--from-wine",
-        "$rFactor2SMMP_Rules$",
-        "--from-wine",
-        "$rFactor2SMMP_MultiRules$",
-        "--from-wine",
-        "$rFactor2SMMP_ForceFeedback$",
-        "--from-wine",
-        "$rFactor2SMMP_Graphics$",
-        "--from-wine",
-        "$rFactor2SMMP_Extended$",
-        "--from-wine",
-        "$rFactor2SMMP_PitInfo$",
-        "--from-wine",
-        "$rFactor2SMMP_Weather$",
-        "--from-wine",
-        "$rFactor2SMMP_HWControl$",
-        "--from-wine",
-        "$rFactor2SMMP_WeatherControl$",
-        "--from-wine",
-        "$rFactor2SMMP_RulesControl$",
-        "--from-wine",
-        "$rFactor2SMMP_PluginControl$",
-    ];
-
-    fn resolve_runtime_launch_client(context: &AppContext) -> anyhow::Result<PathBuf> {
-        if let Some(path) = std::env::var_os("WINECARTE_RUNTIME_LAUNCH_CLIENT") {
-            let path = PathBuf::from(path);
-            if path.exists() {
-                return Ok(path);
-            }
-
-            bail!(
-                "WINECARTE_RUNTIME_LAUNCH_CLIENT points to a missing path: {}",
-                path.display()
-            );
-        }
-
-        let candidates = [
-            context
-                .steam_linux_runtime_path
-                .join("pressure-vessel/bin/steam-runtime-launch-client"),
-            context
-                .steam_linux_runtime_path
-                .join("ubuntu12_64/steam-runtime-launch-client"),
-        ];
-
-        for candidate in candidates {
-            if candidate.exists() {
-                return Ok(candidate);
-            }
-        }
-
-        bail!("could not find steam-runtime-launch-client; set WINECARTE_RUNTIME_LAUNCH_CLIENT")
-    }
-
-    fn resolve_wine2linux_exe() -> anyhow::Result<PathBuf> {
-        if let Some(path) = find_on_path("wine2linux.exe") {
-            return Ok(path);
-        }
-
-        if let Some(path) = std::env::var_os("WINECARTE_WINE2LINUX_EXE") {
-            let path = PathBuf::from(path);
-            if path.exists() {
-                return Ok(path);
-            }
-
-            bail!(
-                "WINECARTE_WINE2LINUX_EXE points to a missing path: {}",
-                path.display()
-            );
-        }
-
-        bail!("could not find wine2linux.exe on PATH; set WINECARTE_WINE2LINUX_EXE")
-    }
-
-    fn game_is_alive(&self, context: &AppContext) -> anyhow::Result<bool> {
-        let runtime_launch_client = Self::resolve_runtime_launch_client(context)?;
-        let bus_name = format!("com.steampowered.App{}", context.steam_appid);
-
-        let output = StdCommand::new(runtime_launch_client)
-            .arg("--bus-name")
-            .arg(&bus_name)
-            .arg("--")
-            .arg("ps")
-            .arg("-eo")
-            .arg("args=")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output()
-            .context("failed to query LMU process state inside pressure-vessel")?;
-
-        if !output.status.success() {
-            return Ok(false);
-        }
-
-        let stdout = str::from_utf8(&output.stdout).context("ps output was not valid UTF-8")?;
-
-        Ok(stdout.lines().any(|line| {
-            Self::GAME_PROCESS_MARKERS
-                .iter()
-                .any(|marker| line.contains(marker))
-                && !line.contains("wine2linux.exe")
-        }))
-    }
-
-    fn on_start(&mut self, context: &AppContext) -> anyhow::Result<()> {
-        let runtime_launch_client = Self::resolve_runtime_launch_client(context)?;
-        let wine2linux_exe = Self::resolve_wine2linux_exe()?;
-        let bus_name = format!("com.steampowered.App{}", context.steam_appid);
-        let retry_deadline = std::time::Instant::now() + Duration::from_secs(10);
-
-        loop {
-            let mut command = process::Command::new(&runtime_launch_client);
-            command
-                .arg("--bus-name")
-                .arg(&bus_name)
-                .arg("--directory=")
-                .arg("--")
-                .arg("wine")
-                .arg(&wine2linux_exe)
-                .args(Self::WINE2LINUX_ARGS)
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .env("STEAM_COMPAT_DATA_PATH", &context.compat_data_path);
-
-            eprintln!("Launching wine2linux helper: {command:?}");
-            log::info!(
-                "Launching wine2linux via steam-runtime-launch-client: {:?}",
-                command
-            );
-            let mut child = command
-                .spawn()
-                .with_context(|| format!("failed to launch {}", wine2linux_exe.display()))?;
-
-            thread::sleep(Duration::from_millis(250));
-            if let Some(status) = child
-                .try_wait()
-                .context("failed to query wine2linux launcher status")?
-            {
-                if std::time::Instant::now() >= retry_deadline {
-                    bail!(
-                        "wine2linux launcher exited before the Steam command-launcher service became available; last status {:?}. \
-Make sure Steam launch options include STEAM_COMPAT_LAUNCHER_SERVICE=proton",
-                        status.code()
-                    );
-                }
-
-                thread::sleep(Duration::from_millis(500));
-                continue;
-            }
-
-            self.wine2linux_process = Some(child);
-            return Ok(());
-        }
-    }
-
-    fn cleanup(&mut self, _context: &AppContext) -> anyhow::Result<()> {
-        if let Some(mut wine2linux_process) = self.wine2linux_process.take() {
-            if let Err(error) = wine2linux_process.start_kill() {
-                log::warn!("failed to stop wine2linux: {error}");
-            }
-        }
-
-        Ok(())
-    }
-
-    fn wait_for_game_exit(&mut self, context: &AppContext) -> anyhow::Result<()> {
-        while self.game_is_alive(context)? {
-            thread::sleep(Duration::from_secs(1));
-        }
-
-        Ok(())
-    }
-}
-
-impl AppHandler for LeMansUltimateHandler {
-    fn on_start(&mut self, context: &AppContext) -> anyhow::Result<()> {
-        LeMansUltimateHandler::on_start(self, context)
-    }
-
-    fn cleanup(&mut self, context: &AppContext) -> anyhow::Result<()> {
-        LeMansUltimateHandler::cleanup(self, context)
-    }
-
-    fn wait_for_game_exit(&mut self, context: &AppContext) -> anyhow::Result<()> {
-        LeMansUltimateHandler::wait_for_game_exit(self, context)
     }
 }
