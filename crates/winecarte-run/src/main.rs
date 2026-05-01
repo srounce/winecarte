@@ -1,11 +1,17 @@
 use anyhow::Context;
 use clap::Parser;
-use std::{env, path::PathBuf, process::Stdio};
+use std::{
+    env,
+    path::PathBuf,
+    process::Stdio,
+    time::{Duration, Instant},
+};
 use thiserror::Error;
-use tokio::process;
+use tokio::{process, signal::unix::{SignalKind, signal}, time};
+use tokio_util::sync::CancellationToken;
 
 mod handlers;
-use handlers::get_handler;
+use handlers::{RunnerState, get_handler};
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -123,6 +129,24 @@ async fn main() -> anyhow::Result<()> {
         steam_appid,
     };
 
+    let shutdown = CancellationToken::new();
+
+    {
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            let mut sigterm = signal(SignalKind::terminate())
+                .expect("failed to register SIGTERM handler");
+            let mut sigint = signal(SignalKind::interrupt())
+                .expect("failed to register SIGINT handler");
+            tokio::select! {
+                _ = sigterm.recv() => {},
+                _ = sigint.recv() => {},
+            }
+            log::info!("shutdown signal received");
+            shutdown.cancel();
+        });
+    }
+
     let mut handler = get_handler(&context.handler_appid)?;
     handler.setup(&context)?;
 
@@ -139,18 +163,110 @@ async fn main() -> anyhow::Result<()> {
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
-    println!("Running: {command:?}");
+    log::info!("Running: {command:?}");
     let mut child_process = command.spawn().with_context(|| "Child command failure")?;
-    handler.on_start(&context)?;
+    log::info!("spawned launcher child for app {}", context.handler_appid);
+    run_handler_loop(&context, &mut *handler, &mut child_process, shutdown).await
+}
 
-    let status = child_process.wait().await?;
+async fn run_handler_loop(
+    context: &AppContext,
+    handler: &mut dyn AppHandler,
+    child_process: &mut process::Child,
+    shutdown: CancellationToken,
+) -> anyhow::Result<()> {
+    let mut state = RunnerState::PreStart;
+    let mut helper_started = false;
+    let mut failure = None;
+    let startup_deadline = Instant::now() + handler.startup_timeout();
+    let mut launcher_exit_status = None;
 
-    println!("Exited with status {:?}", status.code().unwrap_or_default());
-    handler.wait_for_game_exit(&context)?;
+    loop {
+        match state {
+            RunnerState::PreStart => {
+                log::info!("runner state=PreStart for app {}", context.handler_appid);
+                state = RunnerState::WaitingForGame;
+                continue;
+            }
+            RunnerState::WaitingForGame => {
+                log::info!("runner state=WaitingForGame for app {}", context.handler_appid);
+                tokio::select! {
+                    _ = time::sleep(Duration::from_secs(1)) => {},
+                    _ = shutdown.cancelled() => {
+                        state = RunnerState::Completed;
+                        continue;
+                    }
+                }
 
-    handler.cleanup(&context)?;
+                if handler.probe_game_process(context)? {
+                    log::info!("detected game startup for app {}", context.handler_appid);
+                    handler.on_start(context)?;
+                    helper_started = true;
+                    state = RunnerState::Running;
+                    continue;
+                }
 
-    Ok(())
+                if launcher_exit_status.is_none() {
+                    if let Some(status) = child_process.try_wait()? {
+                        launcher_exit_status = Some(status);
+                    }
+                }
+
+                if Instant::now() >= startup_deadline {
+                    failure = Some(if let Some(status) = launcher_exit_status {
+                        anyhow::anyhow!(
+                            "timed out waiting for game startup for app {}; launcher exited with status {:?}",
+                            context.handler_appid,
+                            status.code()
+                        )
+                    } else {
+                        anyhow::anyhow!(
+                            "timed out waiting for game startup for app {}",
+                            context.handler_appid
+                        )
+                    });
+                    state = RunnerState::Failed;
+                    continue;
+                }
+            }
+            RunnerState::Running => {
+                log::info!("runner state=Running for app {}", context.handler_appid);
+                tokio::select! {
+                    _ = time::sleep(Duration::from_secs(1)) => {},
+                    _ = shutdown.cancelled() => {
+                        state = RunnerState::CleanUp;
+                        continue;
+                    }
+                }
+
+                if handler.probe_game_process(context)? {
+                    continue;
+                }
+
+                log::info!("detected game exit for app {}", context.handler_appid);
+                state = RunnerState::CleanUp;
+            }
+            RunnerState::CleanUp => {
+                log::info!("runner state=CleanUp for app {}", context.handler_appid);
+                if helper_started {
+                    handler.cleanup(context)?;
+                    helper_started = false;
+                }
+
+                state = RunnerState::Completed;
+            }
+            RunnerState::Completed => {
+                log::info!("runner state=Completed for app {}", context.handler_appid);
+                return Ok(());
+            }
+            RunnerState::Failed => {
+                log::info!("runner state=Failed for app {}", context.handler_appid);
+                return Err(failure
+                    .take()
+                    .unwrap_or_else(|| anyhow::anyhow!("runner entered failed state")));
+            }
+        }
+    }
 }
 
 trait AppHandler {
@@ -166,7 +282,11 @@ trait AppHandler {
         Ok(())
     }
 
-    fn wait_for_game_exit(&mut self, _context: &AppContext) -> anyhow::Result<()> {
-        Ok(())
+    fn startup_timeout(&self) -> Duration {
+        Duration::from_secs(120)
+    }
+
+    fn probe_game_process(&mut self, _context: &AppContext) -> anyhow::Result<bool> {
+        Ok(false)
     }
 }

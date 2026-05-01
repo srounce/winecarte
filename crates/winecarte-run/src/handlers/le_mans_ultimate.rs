@@ -15,8 +15,6 @@ impl Default for LeMansUltimateHandler {
 }
 
 impl LeMansUltimateHandler {
-    const GAME_PROCESS_MARKERS: [&'static str; 2] =
-        ["Le Mans Ultimate.exe", "start_protected_game.exe"];
     const WINE2LINUX_ARGS: [&'static str; 30] = [
         "--from-wine",
         "LMU_Data",
@@ -64,11 +62,7 @@ impl AppHandler for LeMansUltimateHandler {
         common::cleanup_wine2linux(&mut self.wine2linux_process)
     }
 
-    fn wait_for_game_exit(&mut self, context: &AppContext) -> anyhow::Result<()> {
-        common::wait_for_game_exit(
-            context,
-            &Self::GAME_PROCESS_MARKERS,
-            "failed to query LMU process state inside pressure-vessel",
-        )
+    fn probe_game_process(&mut self, _context: &AppContext) -> anyhow::Result<bool> {
+        common::game_is_alive(&["Le Mans Ultimate.exe"])
     }
 }

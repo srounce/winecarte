@@ -2,44 +2,30 @@ use super::common;
 use crate::{AppContext, AppHandler};
 use tokio::process;
 
-pub(crate) struct AssettoCorsaHandler {
+pub(crate) struct ProjectCars2Handler {
     wine2linux_process: Option<process::Child>,
     process_markers: &'static [&'static str],
 }
 
-impl AssettoCorsaHandler {
-    const WINE2LINUX_ARGS: [&'static str; 6] = [
-        "--from-wine",
-        r"acpmf_physics",
-        "--from-wine",
-        r"acpmf_graphics",
-        "--from-wine",
-        r"acpmf_static",
-    ];
+impl ProjectCars2Handler {
+    const WINE2LINUX_ARGS: [&'static str; 2] = ["--from-wine", "$pcars2$"];
 
-    pub(crate) fn assetto_corsa() -> Self {
+    pub(crate) fn project_cars_2() -> Self {
         Self {
             wine2linux_process: None,
-            process_markers: &["acs.exe"],
+            process_markers: &["pCARS2.exe"],
         }
     }
 
-    pub(crate) fn assetto_corsa_competizione() -> Self {
+    pub(crate) fn automobilista_2() -> Self {
         Self {
             wine2linux_process: None,
-            process_markers: &["AC2-Win64-Shipping.exe"],
-        }
-    }
-
-    pub(crate) fn assetto_corsa_evo() -> Self {
-        Self {
-            wine2linux_process: None,
-            process_markers: &["AssettoCorsaEVO.exe"],
+            process_markers: &["AMS2.exe"],
         }
     }
 }
 
-impl AppHandler for AssettoCorsaHandler {
+impl AppHandler for ProjectCars2Handler {
     fn on_start(&mut self, context: &AppContext) -> anyhow::Result<()> {
         common::launch_wine2linux(
             &mut self.wine2linux_process,

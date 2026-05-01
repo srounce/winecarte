@@ -2,11 +2,26 @@ use crate::{AppContext, find_on_path};
 use anyhow::{Context, bail};
 use std::{
     path::PathBuf,
-    process::{Command as StdCommand, Stdio},
+    process::Stdio,
     str, thread,
     time::Duration,
 };
 use tokio::process;
+
+pub(crate) enum RunnerState {
+    /// The game command yet has not been launched yet.
+    PreStart,
+    /// Game command launched, waiting for the real game process to appear.
+    WaitingForGame,
+    /// Game process has been seen and is still alive.
+    Running,
+    /// Game process has exited, and winecarte-run is shutting down wine2linux.
+    CleanUp,
+    /// Cleanup is done and winecarte-run is exiting or has exited.
+    Completed,
+    /// Terminal failure state for launch timeout, launch error, or helper cleanup failure.
+    Failed,
+}
 
 pub(crate) fn resolve_runtime_launch_client(context: &AppContext) -> anyhow::Result<PathBuf> {
     if let Some(path) = std::env::var_os("WINECARTE_RUNTIME_LAUNCH_CLIENT") {
@@ -83,7 +98,7 @@ pub(crate) fn launch_wine2linux(
             .stderr(Stdio::inherit())
             .env("STEAM_COMPAT_DATA_PATH", &context.compat_data_path);
 
-        eprintln!("Launching wine2linux helper: {command:?}");
+        log::info!("Launching wine2linux helper: {command:?}");
         log::info!(
             "Launching wine2linux via steam-runtime-launch-client: {:?}",
             command
@@ -126,47 +141,142 @@ pub(crate) fn cleanup_wine2linux(
     Ok(())
 }
 
-pub(crate) fn game_is_alive(
-    context: &AppContext,
-    process_markers: &[&str],
-    error_context: &str,
-) -> anyhow::Result<bool> {
-    let runtime_launch_client = resolve_runtime_launch_client(context)?;
-    let bus_name = format!("com.steampowered.App{}", context.steam_appid);
-
-    let output = StdCommand::new(runtime_launch_client)
-        .arg("--bus-name")
-        .arg(&bus_name)
-        .arg("--")
-        .arg("ps")
-        .arg("-eo")
-        .arg("args=")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .with_context(|| error_context.to_string())?;
-
-    if !output.status.success() {
-        return Ok(false);
-    }
-
-    let stdout = str::from_utf8(&output.stdout).context("ps output was not valid UTF-8")?;
-
-    Ok(stdout.lines().any(|line| {
-        process_markers.iter().any(|marker| line.contains(marker))
-            && !line.contains("wine2linux.exe")
-    }))
+pub(crate) fn game_is_alive(process_markers: &[&str]) -> anyhow::Result<bool> {
+    proc_game_is_alive_in(std::path::Path::new("/proc"), process_markers)
 }
 
-pub(crate) fn wait_for_game_exit(
-    context: &AppContext,
+fn exe_matches(argv0: &str, marker: &str) -> bool {
+    argv0 == marker
+        || argv0.ends_with(&format!("\\{marker}"))
+        || argv0.ends_with(&format!("/{marker}"))
+}
+
+fn proc_game_is_alive_in(
+    proc_dir: &std::path::Path,
     process_markers: &[&str],
-    error_context: &str,
-) -> anyhow::Result<()> {
-    while game_is_alive(context, process_markers, error_context)? {
-        thread::sleep(Duration::from_secs(1));
+) -> anyhow::Result<bool> {
+    for entry in std::fs::read_dir(proc_dir).context("failed to read /proc")? {
+        let entry = entry.context("failed to read /proc entry")?;
+
+        if !entry.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+
+        let cmdline = match std::fs::read(entry.path().join("cmdline")) {
+            Ok(data) => data,
+            Err(_) => continue,
+        };
+
+        if cmdline.is_empty() {
+            continue;
+        }
+
+        let argv0_bytes = cmdline.split(|&b| b == 0).next().unwrap_or(&[]);
+        let argv0 = match str::from_utf8(argv0_bytes) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        if process_markers.iter().any(|marker| exe_matches(argv0, marker))
+            && !exe_matches(argv0, "wine2linux.exe")
+        {
+            return Ok(true);
+        }
     }
 
-    Ok(())
+    Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn add_process(proc_dir: &std::path::Path, pid: u32, argv: &[&str]) {
+        let pid_dir = proc_dir.join(pid.to_string());
+        fs::create_dir_all(&pid_dir).unwrap();
+        let cmdline: Vec<u8> = argv
+            .iter()
+            .flat_map(|s| s.bytes().chain(std::iter::once(0u8)))
+            .collect();
+        fs::write(pid_dir.join("cmdline"), &cmdline).unwrap();
+    }
+
+    fn add_kernel_thread(proc_dir: &std::path::Path, pid: u32) {
+        let pid_dir = proc_dir.join(pid.to_string());
+        fs::create_dir_all(&pid_dir).unwrap();
+        fs::write(pid_dir.join("cmdline"), b"").unwrap();
+    }
+
+    #[test]
+    fn detects_game_by_argv0() {
+        let dir = tempfile::tempdir().unwrap();
+        add_process(dir.path(), 1234, &[r"Z:\games\Game.exe"]);
+        assert!(proc_game_is_alive_in(dir.path(), &["Game.exe"]).unwrap());
+    }
+
+    #[test]
+    fn ignores_marker_in_args_not_argv0() {
+        let dir = tempfile::tempdir().unwrap();
+        add_process(
+            dir.path(),
+            1234,
+            &[r"c:\windows\system32\launcher.exe", "/games/Game.exe"],
+        );
+        assert!(!proc_game_is_alive_in(dir.path(), &["Game.exe"]).unwrap());
+    }
+
+    #[test]
+    fn returns_false_with_no_matching_process() {
+        let dir = tempfile::tempdir().unwrap();
+        add_process(dir.path(), 1234, &[r"Z:\games\OtherGame.exe"]);
+        assert!(!proc_game_is_alive_in(dir.path(), &["Game.exe"]).unwrap());
+    }
+
+    #[test]
+    fn skips_kernel_threads() {
+        let dir = tempfile::tempdir().unwrap();
+        add_kernel_thread(dir.path(), 1);
+        add_process(dir.path(), 1234, &[r"Z:\games\Game.exe"]);
+        assert!(proc_game_is_alive_in(dir.path(), &["Game.exe"]).unwrap());
+    }
+
+    #[test]
+    fn skips_non_pid_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let non_pid = dir.path().join("net");
+        fs::create_dir_all(&non_pid).unwrap();
+        fs::write(non_pid.join("cmdline"), b"Game.exe\0").unwrap();
+        assert!(!proc_game_is_alive_in(dir.path(), &["Game.exe"]).unwrap());
+    }
+
+    #[test]
+    fn excludes_wine2linux_from_results() {
+        let dir = tempfile::tempdir().unwrap();
+        add_process(dir.path(), 1234, &[r"Z:\tools\wine2linux.exe"]);
+        assert!(!proc_game_is_alive_in(dir.path(), &["wine2linux.exe"]).unwrap());
+    }
+
+    #[test]
+    fn game_and_launcher_coexist_returns_true() {
+        let dir = tempfile::tempdir().unwrap();
+        add_process(
+            dir.path(),
+            1234,
+            &[r"c:\windows\system32\launcher.exe", "/games/Game.exe"],
+        );
+        add_process(dir.path(), 1235, &[r"Z:\games\Game.exe"]);
+        assert!(proc_game_is_alive_in(dir.path(), &["Game.exe"]).unwrap());
+    }
+
+    #[test]
+    fn only_launcher_remains_returns_false() {
+        let dir = tempfile::tempdir().unwrap();
+        add_process(
+            dir.path(),
+            1234,
+            &[r"c:\windows\system32\launcher.exe", "/games/Game.exe"],
+        );
+        assert!(!proc_game_is_alive_in(dir.path(), &["Game.exe"]).unwrap());
+    }
 }

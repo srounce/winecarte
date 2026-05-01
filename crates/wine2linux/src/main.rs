@@ -1,6 +1,6 @@
 use anyhow::{Context, bail};
 use clap::Parser;
-use log::{debug, info, warn};
+use log::{debug, info, warn, trace};
 use std::{
     fs::{File, OpenOptions, create_dir_all, remove_file},
     io::{Read, Seek, SeekFrom, Write},
@@ -1255,7 +1255,7 @@ fn main() -> anyhow::Result<()> {
                 }
             }
 
-            debug!("poll iteration complete; updated {copied_count} mapping(s)");
+            trace!("poll iteration complete; updated {copied_count} mapping(s)");
 
             if args.once || shutdown_requested() {
                 break;
