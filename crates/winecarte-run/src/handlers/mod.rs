@@ -12,7 +12,8 @@ pub(crate) use project_cars2::ProjectCars2Handler;
 
 pub(crate) fn get_handler(appid: &str) -> Result<Box<dyn AppHandler>, StartupError> {
     match appid {
-        "2399420" => Ok(Box::new(LeMansUltimateHandler::default())),
+        "2399420" => Ok(Box::new(LeMansUltimateHandler::le_mans_ultimate())),
+        "365960" => Ok(Box::new(LeMansUltimateHandler::rfactor2())),
         "244210" => Ok(Box::new(AssettoCorsaHandler::assetto_corsa())),
         "805550" => Ok(Box::new(AssettoCorsaHandler::assetto_corsa_competizione())),
         "3058630" => Ok(Box::new(AssettoCorsaHandler::assetto_corsa_evo())),

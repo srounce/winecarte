@@ -30,7 +30,8 @@ Steam
 | Assetto Corsa | 244210 | `acpmf_physics`, `acpmf_graphics`, `acpmf_static` |
 | Assetto Corsa Competizione | 805550 | `acpmf_physics`, `acpmf_graphics`, `acpmf_static` |
 | Assetto Corsa Evo | 3058630 | `acpmf_physics`, `acpmf_graphics`, `acpmf_static` |
-| Le Mans Ultimate | 2399420 | `LMU_Data`, `$rFactor2SMMP_Telemetry$`, and related rFactor2 mappings |
+| Le Mans Ultimate | 2399420 | `LMU_Data`, `$rFactor2SMMP_Telemetry$`, and related rFactor2 SMMP mappings |
+| rFactor2 | 365960 | `$rFactor2SMMP_Telemetry$`, and related rFactor2 SMMP mappings |
 | Project CARS 2 | 378860 | `$pcars2$` |
 | Automobilista 2 | 1066890 | `$pcars2$` |
 
