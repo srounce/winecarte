@@ -20,7 +20,7 @@ impl AssettoCorsaHandler {
     pub(crate) fn assetto_corsa() -> Self {
         Self {
             wine2linux_process: None,
-            process_markers: &["acs.exe"],
+            process_markers: &["acs.exe", "AssettoCorsa.exe", "Content Manager.exe", "Content Manager Safe.exe"],
         }
     }
 
