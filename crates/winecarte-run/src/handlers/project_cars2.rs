@@ -13,14 +13,14 @@ impl ProjectCars2Handler {
     pub(crate) fn project_cars_2() -> Self {
         Self {
             wine2linux_process: None,
-            process_markers: &["pCARS2.exe"],
+            process_markers: &["pCARS2AVX.exe"],
         }
     }
 
     pub(crate) fn automobilista_2() -> Self {
         Self {
             wine2linux_process: None,
-            process_markers: &["AMS2.exe"],
+            process_markers: &["AMS2AVX.exe"],
         }
     }
 }
