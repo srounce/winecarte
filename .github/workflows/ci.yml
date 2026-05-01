@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: "1.95"
+      - uses: Swatinem/rust-cache@v2
+      # wine2linux depends on windows-sys and won't compile for the Linux host target
+      - run: cargo test --locked --workspace --exclude wine2linux
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross-compilation tools
+        run: sudo apt-get install -y musl-tools mingw-w64
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: "1.95"
+          targets: x86_64-unknown-linux-musl,x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2
+      - name: Build winecarte-run (musl)
+        run: >
+          cargo build --locked --release
+          --package winecarte-run --bin winecarte-run
+          --target x86_64-unknown-linux-musl
+      - name: Build wine2linux (Windows)
+        run: >
+          cargo build --locked --release
+          --package wine2linux --bin wine2linux
+          --target x86_64-pc-windows-gnu
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries
+          retention-days: 7
+          path: |
+            target/x86_64-unknown-linux-musl/release/winecarte-run
+            target/x86_64-pc-windows-gnu/release/wine2linux.exe
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-binaries
+          path: dist
+      - name: Create tarball
+        run: |
+          mkdir staging
+          cp dist/target/x86_64-unknown-linux-musl/release/winecarte-run staging/
+          cp dist/target/x86_64-pc-windows-gnu/release/wine2linux.exe staging/
+          tar -czf "winecarte-${GITHUB_REF_NAME}.tar.gz" -C staging .
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: "winecarte-*.tar.gz"
+          prerelease: ${{ contains(github.ref_name, '-') }}
