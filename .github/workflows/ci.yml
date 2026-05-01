@@ -73,3 +73,4 @@ jobs:
         with:
           files: "winecarte-*.tar.gz"
           prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
