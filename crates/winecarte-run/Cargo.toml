@@ -9,7 +9,6 @@ anyhow = "1"
 clap = { version = "4", features = [ "derive" ] }
 tokio-stream = "0.1"
 async-trait = "0.1"
-vdf = { path = "../vdf" }
 env_logger = "0.11.10"
 log = "0.4.29"
 
