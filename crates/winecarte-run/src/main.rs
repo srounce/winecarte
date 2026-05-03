@@ -1,4 +1,5 @@
 use anyhow::Context;
+use async_trait::async_trait;
 use clap::Parser;
 use std::{
     env,
@@ -196,6 +197,19 @@ async fn run_handler_loop(
                         state = RunnerState::Completed;
                         continue;
                     }
+                    status = child_process.wait(), if launcher_exit_status.is_none() => {
+                        launcher_exit_status = Some(status?);
+                        log::info!("launcher exited for app {}; checking for game process", context.handler_appid);
+                        if handler.probe_game_process(context)? {
+                            log::info!("detected game startup for app {}", context.handler_appid);
+                            handler.on_start(context)?;
+                            helper_started = true;
+                            state = RunnerState::Running;
+                        } else {
+                            state = RunnerState::CleanUp;
+                        }
+                        continue;
+                    }
                 }
 
                 if handler.probe_game_process(context)? {
@@ -206,25 +220,11 @@ async fn run_handler_loop(
                     continue;
                 }
 
-                if launcher_exit_status.is_none() {
-                    if let Some(status) = child_process.try_wait()? {
-                        launcher_exit_status = Some(status);
-                    }
-                }
-
                 if Instant::now() >= startup_deadline {
-                    failure = Some(if let Some(status) = launcher_exit_status {
-                        anyhow::anyhow!(
-                            "timed out waiting for game startup for app {}; launcher exited with status {:?}",
-                            context.handler_appid,
-                            status.code()
-                        )
-                    } else {
-                        anyhow::anyhow!(
-                            "timed out waiting for game startup for app {}",
-                            context.handler_appid
-                        )
-                    });
+                    failure = Some(anyhow::anyhow!(
+                        "timed out waiting for game startup for app {}",
+                        context.handler_appid
+                    ));
                     state = RunnerState::Failed;
                     continue;
                 }
@@ -249,7 +249,7 @@ async fn run_handler_loop(
             RunnerState::CleanUp => {
                 log::info!("runner state=CleanUp for app {}", context.handler_appid);
                 if helper_started {
-                    handler.cleanup(context)?;
+                    handler.cleanup(context).await?;
                     helper_started = false;
                 }
 
@@ -269,6 +269,7 @@ async fn run_handler_loop(
     }
 }
 
+#[async_trait(?Send)]
 trait AppHandler {
     fn setup(&mut self, _context: &AppContext) -> anyhow::Result<()> {
         Ok(())
@@ -278,7 +279,7 @@ trait AppHandler {
         Ok(())
     }
 
-    fn cleanup(&mut self, _context: &AppContext) -> anyhow::Result<()> {
+    async fn cleanup(&mut self, _context: &AppContext) -> anyhow::Result<()> {
         Ok(())
     }
 

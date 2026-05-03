@@ -129,12 +129,18 @@ Make sure Steam launch options include STEAM_COMPAT_LAUNCHER_SERVICE=proton",
     }
 }
 
-pub(crate) fn cleanup_wine2linux(
+pub(crate) async fn cleanup_wine2linux(
     wine2linux_process: &mut Option<process::Child>,
 ) -> anyhow::Result<()> {
-    if let Some(mut wine2linux_process) = wine2linux_process.take() {
-        if let Err(error) = wine2linux_process.start_kill() {
+    if let Some(mut process) = wine2linux_process.take() {
+        if let Err(error) = process.start_kill() {
             log::warn!("failed to stop wine2linux: {error}");
+        } else {
+            // Wait for the process to fully exit so Wine's wineserver releases
+            // the Win32 file handles wine2linux held on the destination files.
+            // Without this, a quick game restart can hit sharing violations when
+            // the new wine2linux tries to open those files.
+            let _ = process.wait().await;
         }
     }
 

@@ -1,4 +1,5 @@
 use super::common;
+use async_trait::async_trait;
 use crate::{AppContext, AppHandler};
 use tokio::process;
 
@@ -39,6 +40,7 @@ impl AssettoCorsaHandler {
     }
 }
 
+#[async_trait(?Send)]
 impl AppHandler for AssettoCorsaHandler {
     fn on_start(&mut self, context: &AppContext) -> anyhow::Result<()> {
         common::launch_wine2linux(
@@ -48,8 +50,8 @@ impl AppHandler for AssettoCorsaHandler {
         )
     }
 
-    fn cleanup(&mut self, _context: &AppContext) -> anyhow::Result<()> {
-        common::cleanup_wine2linux(&mut self.wine2linux_process)
+    async fn cleanup(&mut self, _context: &AppContext) -> anyhow::Result<()> {
+        common::cleanup_wine2linux(&mut self.wine2linux_process).await
     }
 
     fn probe_game_process(&mut self, _context: &AppContext) -> anyhow::Result<bool> {

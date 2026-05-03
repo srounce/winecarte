@@ -1,4 +1,5 @@
 use super::common;
+use async_trait::async_trait;
 use crate::{AppContext, AppHandler};
 use tokio::process;
 
@@ -88,13 +89,14 @@ impl LeMansUltimateHandler {
     }
 }
 
+#[async_trait(?Send)]
 impl AppHandler for LeMansUltimateHandler {
     fn on_start(&mut self, context: &AppContext) -> anyhow::Result<()> {
         common::launch_wine2linux(&mut self.wine2linux_process, context, self.wine2linux_args)
     }
 
-    fn cleanup(&mut self, _context: &AppContext) -> anyhow::Result<()> {
-        common::cleanup_wine2linux(&mut self.wine2linux_process)
+    async fn cleanup(&mut self, _context: &AppContext) -> anyhow::Result<()> {
+        common::cleanup_wine2linux(&mut self.wine2linux_process).await
     }
 
     fn probe_game_process(&mut self, _context: &AppContext) -> anyhow::Result<bool> {
