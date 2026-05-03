@@ -66,7 +66,7 @@ struct Args {
     from_linux: Vec<FromLinuxArg>,
 
     /// Poll interval in milliseconds.
-    #[arg(long, default_value_t = 5)]
+    #[arg(long, default_value_t = 16)]
     interval_ms: u64,
 
     /// Host destination root. Unix-style absolute paths are translated to
