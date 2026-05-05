@@ -3,7 +3,7 @@ use clap::Parser;
 use log::{debug, info, warn, trace};
 use std::{
     fs::{File, OpenOptions, create_dir_all, remove_file},
-    io::{Read, Seek, SeekFrom, Write},
+    io::Read,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, AtomicI32, Ordering},
     thread,
@@ -14,7 +14,7 @@ use thiserror::Error;
 #[cfg(not(windows))]
 compile_error!("wine2linux must be built for a Windows target");
 
-use std::{io, os::windows::ffi::OsStrExt, ptr};
+use std::{io, os::windows::{ffi::OsStrExt, io::AsRawHandle}, ptr};
 
 use windows_sys::Win32::{
     Foundation::{CloseHandle, WAIT_OBJECT_0, WAIT_TIMEOUT},
@@ -124,7 +124,7 @@ struct FromWineTarget {
 
 struct FromWineState {
     target: FromWineTarget,
-    destination_file: Option<File>,
+    destination_mapping: Option<DestinationFileMapping>,
     current: Vec<u8>,
     previous: Vec<u8>,
     source_was_available: bool,
@@ -183,6 +183,28 @@ impl Drop for WritableMapping {
             }
             if !self.handle.is_null() {
                 CloseHandle(self.handle);
+            }
+        }
+    }
+}
+
+struct DestinationFileMapping {
+    _file: File,
+    map_handle: windows_sys::Win32::Foundation::HANDLE,
+    view: *mut u8,
+    size: usize,
+}
+
+impl Drop for DestinationFileMapping {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.view.is_null() {
+                UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
+                    Value: self.view.cast(),
+                });
+            }
+            if !self.map_handle.is_null() {
+                CloseHandle(self.map_handle);
             }
         }
     }
@@ -451,7 +473,7 @@ fn build_from_linux_targets(args: &Args) -> Vec<FromLinuxTarget> {
         .collect()
 }
 
-fn ensure_destination_file(path: &Path, size: usize) -> anyhow::Result<File> {
+fn ensure_destination_mapping(path: &Path, size: usize) -> anyhow::Result<DestinationFileMapping> {
     if let Some(parent) = path.parent() {
         create_dir_all(parent).with_context(|| {
             format!(
@@ -472,14 +494,43 @@ fn ensure_destination_file(path: &Path, size: usize) -> anyhow::Result<File> {
     file.set_len(size as u64)
         .with_context(|| format!("failed to size destination file {}", path.display()))?;
 
-    Ok(file)
+    let file_handle = file.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
+    let size_u64 = size as u64;
+    let map_handle = unsafe {
+        CreateFileMappingA(
+            file_handle,
+            std::ptr::null(),
+            PAGE_READWRITE,
+            (size_u64 >> 32) as u32,
+            size_u64 as u32,
+            std::ptr::null(),
+        )
+    };
+    if map_handle.is_null() {
+        return Err(io::Error::last_os_error())
+            .with_context(|| format!("failed to create file mapping for {}", path.display()));
+    }
+
+    let view = unsafe { MapViewOfFile(map_handle, FILE_MAP_ALL_ACCESS, 0, 0, size) }.Value;
+    if view.is_null() {
+        unsafe { CloseHandle(map_handle); }
+        return Err(io::Error::last_os_error())
+            .with_context(|| format!("failed to map view for {}", path.display()));
+    }
+
+    Ok(DestinationFileMapping {
+        _file: file,
+        map_handle,
+        view: view.cast(),
+        size,
+    })
 }
 
 fn initialize_from_wine_state(target: FromWineTarget) -> anyhow::Result<FromWineState> {
     Ok(FromWineState {
         previous: Vec::new(),
         current: Vec::new(),
-        destination_file: None,
+        destination_mapping: None,
         source_was_available: false,
         waiting_logged: false,
         target,
@@ -489,7 +540,7 @@ fn initialize_from_wine_state(target: FromWineTarget) -> anyhow::Result<FromWine
 fn cleanup_from_wine_states(states: Vec<FromWineState>, keep_output_on_exit: bool) {
     for state in states {
         let destination_path = state.target.destination_wine_path.clone();
-        drop(state.destination_file);
+        drop(state.destination_mapping);
 
         if keep_output_on_exit {
             info!("keeping destination file {}", destination_path.display());
@@ -944,7 +995,7 @@ fn wait_for_event_signal(event_name: &str, interval: Duration) -> anyhow::Result
 }
 
 fn ensure_from_wine_state_ready(state: &mut FromWineState) -> anyhow::Result<bool> {
-    if state.destination_file.is_some() {
+    if state.destination_mapping.is_some() {
         return Ok(true);
     }
 
@@ -980,7 +1031,7 @@ fn ensure_from_wine_state_ready(state: &mut FromWineState) -> anyhow::Result<boo
         .target
         .size
         .context("from-wine target size must be resolved before initialization")?;
-    state.destination_file = Some(ensure_destination_file(
+    state.destination_mapping = Some(ensure_destination_mapping(
         &state.target.destination_wine_path,
         size,
     )?);
@@ -1036,39 +1087,13 @@ fn copy_from_wine_if_changed(
         return Ok(false);
     }
 
-    state
-        .destination_file
-        .as_mut()
-        .context("from-wine destination file not initialized")?
-        .seek(SeekFrom::Start(0))
-        .with_context(|| {
-            format!(
-                "failed to rewind destination file {}",
-                state.target.destination_host_path
-            )
-        })?;
-    state
-        .destination_file
-        .as_mut()
-        .context("from-wine destination file not initialized")?
-        .write_all(&state.current)
-        .with_context(|| {
-            format!(
-                "failed to write destination file {}",
-                state.target.destination_host_path
-            )
-        })?;
-    state
-        .destination_file
-        .as_mut()
-        .context("from-wine destination file not initialized")?
-        .flush()
-        .with_context(|| {
-            format!(
-                "failed to flush destination file {}",
-                state.target.destination_host_path
-            )
-        })?;
+    let mapping = state
+        .destination_mapping
+        .as_ref()
+        .context("from-wine destination mapping not initialized")?;
+    unsafe {
+        ptr::copy_nonoverlapping(state.current.as_ptr(), mapping.view, mapping.size);
+    }
 
     state.previous.copy_from_slice(&state.current);
 
