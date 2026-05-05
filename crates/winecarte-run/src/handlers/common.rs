@@ -56,13 +56,13 @@ pub(crate) fn resolve_runtime_launch_client(context: &AppContext) -> anyhow::Res
 
 pub(crate) fn resolve_wine2linux_exe() -> anyhow::Result<PathBuf> {
     if let Some(path) = find_on_path("wine2linux.exe") {
-        return Ok(path);
+        return Ok(path.canonicalize().unwrap_or(path));
     }
 
     if let Some(path) = std::env::var_os("WINECARTE_WINE2LINUX_EXE") {
         let path = PathBuf::from(path);
         if path.exists() {
-            return Ok(path);
+            return Ok(path.canonicalize().unwrap_or(path));
         }
 
         bail!(
@@ -81,6 +81,7 @@ pub(crate) fn launch_wine2linux(
 ) -> anyhow::Result<()> {
     let runtime_launch_client = resolve_runtime_launch_client(context)?;
     let wine2linux_exe = resolve_wine2linux_exe()?;
+    log::info!("Using wine2linux: {}", wine2linux_exe.display());
     let bus_name = format!("com.steampowered.App{}", context.steam_appid);
     let retry_deadline = std::time::Instant::now() + Duration::from_secs(10);
 
