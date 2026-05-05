@@ -9,13 +9,17 @@ pub(crate) struct AssettoCorsaHandler {
 }
 
 impl AssettoCorsaHandler {
-    const WINE2LINUX_ARGS: [&'static str; 6] = [
+    const WINE2LINUX_ARGS: [&'static str; 10] = [
         "--from-wine",
         r"acpmf_physics",
         "--from-wine",
         r"acpmf_graphics",
         "--from-wine",
         r"acpmf_static",
+        "--from-wine",
+        r"acpmf_simhub_v2",
+        "--from-wine",
+        r"acpmf_crewchief",
     ];
 
     pub(crate) fn assetto_corsa() -> Self {
