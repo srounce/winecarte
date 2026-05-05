@@ -1,12 +1,12 @@
-# winecarte
+# Winecarte
 
-Racing simulators publish live telemetry — physics, graphics state, lap timing — through Win32 named shared memory. When these games run under Proton on Linux, that shared memory is confined to the Wine environment and unreachable by native Linux applications such as dashboards, overlays, and telemetry recorders.
+Racing simulators publish live telemetry (physics, graphics state, lap timing, etc.) via Win32 named shared memory. When these games run under Proton on Linux, that shared memory is confined to the Wine environment and unreachable by native Linux applications such as dashboards, overlays, and telemetry recorders.
 
-winecarte bridges that gap by mirroring Win32 named mappings into Linux shared memory files under `/dev/shm`, making them available to any Linux process as though the game were running natively.
+Winecarte bridges that gap by mirroring Win32 named mappings into Linux shared memory files under `/dev/shm`, making them available to any Linux process as though the game were running natively.
 
 ## How it works
 
-winecarte consists of two binaries that work in tandem:
+Winecarte consists of two binaries that work in tandem:
 
 **`wine2linux.exe`** runs inside the Wine/Proton environment alongside the game. It opens the Win32 named file mappings created by the game and periodically copies their contents into Linux files (defaulting to `/dev/shm`). It is cross-compiled to a Windows executable so it can call Win32 APIs directly.
 
@@ -34,6 +34,9 @@ Steam
 | rFactor2 | 365960 | `$rFactor2SMMP_Telemetry$`, and related rFactor2 SMMP mappings |
 | Project CARS 2 | 378860 | `$pcars2$` |
 | Automobilista 2 | 1066890 | `$pcars2$` |
+
+> [!WARNING]
+> **rFactor2 / Le Mans Ultimate**: Do not use Winecarte alongside **rF2SharedMemoryMapPlugin_Wine**. The Wine-specific version of the plugin already writes the shared memory files under `/dev/shm`, which conflicts with Winecarte attempting to write the same files. The original windows version of the plugin (or its various forks) can be used instead.
 
 ## Usage
 
