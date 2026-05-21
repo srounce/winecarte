@@ -190,7 +190,10 @@ async fn run_handler_loop(
                 continue;
             }
             RunnerState::WaitingForGame => {
-                log::info!("runner state=WaitingForGame for app {}", context.handler_appid);
+                log::debug!(
+                    "runner state=WaitingForGame for app {}",
+                    context.handler_appid
+                );
                 tokio::select! {
                     _ = time::sleep(Duration::from_secs(1)) => {},
                     _ = shutdown.cancelled() => {
@@ -230,7 +233,7 @@ async fn run_handler_loop(
                 }
             }
             RunnerState::Running => {
-                log::info!("runner state=Running for app {}", context.handler_appid);
+                log::debug!("runner state=Running for app {}", context.handler_appid);
                 tokio::select! {
                     _ = time::sleep(Duration::from_secs(1)) => {},
                     _ = shutdown.cancelled() => {
