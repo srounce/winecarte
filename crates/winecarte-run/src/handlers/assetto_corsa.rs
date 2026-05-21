@@ -5,26 +5,46 @@ use tokio::process;
 
 pub(crate) struct AssettoCorsaHandler {
     wine2linux_process: Option<process::Child>,
+    wine2linux_args: &'static [&'static str],
     process_markers: &'static [&'static str],
 }
 
 impl AssettoCorsaHandler {
-    const WINE2LINUX_ARGS: [&'static str; 10] = [
+    const AC_WINE2LINUX_ARGS: [&'static str; 10] = [
         "--from-wine",
-        r"acpmf_physics",
+        "acpmf_physics",
         "--from-wine",
-        r"acpmf_graphics",
+        "acpmf_graphics",
         "--from-wine",
-        r"acpmf_static",
+        "acpmf_static",
         "--from-wine",
-        r"acpmf_simhub_v2",
+        "acpmf_simhub_v2",
         "--from-wine",
-        r"acpmf_crewchief",
+        "acpmf_crewchief",
+    ];
+
+    const ACC_WINE2LINUX_ARGS: [&'static str; 6] = [
+        "--from-wine",
+        "acpmf_physics",
+        "--from-wine",
+        "acpmf_graphics",
+        "--from-wine",
+        "acpmf_static",
+    ];
+
+    const ACE_WINE2LINUX_ARGS: [&'static str; 6] = [
+        "--from-wine",
+        r"Local\acevo_pmf_static|acevo_pmf_static",
+        "--from-wine",
+        r"Local\acevo_pmf_physics|acevo_pmf_physics",
+        "--from-wine",
+        r"Local\acevo_pmf_graphics|acevo_pmf_graphics",
     ];
 
     pub(crate) fn assetto_corsa() -> Self {
         Self {
             wine2linux_process: None,
+            wine2linux_args: &Self::AC_WINE2LINUX_ARGS,
             process_markers: &["acs.exe", "AssettoCorsa.exe", "Content Manager.exe", "Content Manager Safe.exe"],
         }
     }
@@ -32,6 +52,7 @@ impl AssettoCorsaHandler {
     pub(crate) fn assetto_corsa_competizione() -> Self {
         Self {
             wine2linux_process: None,
+            wine2linux_args: &Self::ACC_WINE2LINUX_ARGS,
             process_markers: &["AC2-Win64-Shipping.exe"],
         }
     }
@@ -39,6 +60,7 @@ impl AssettoCorsaHandler {
     pub(crate) fn assetto_corsa_evo() -> Self {
         Self {
             wine2linux_process: None,
+            wine2linux_args: &Self::ACE_WINE2LINUX_ARGS,
             process_markers: &["AssettoCorsaEVO.exe"],
         }
     }
@@ -50,7 +72,7 @@ impl AppHandler for AssettoCorsaHandler {
         common::launch_wine2linux(
             &mut self.wine2linux_process,
             context,
-            &Self::WINE2LINUX_ARGS,
+            self.wine2linux_args,
         )
     }
 
