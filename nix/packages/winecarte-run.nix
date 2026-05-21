@@ -1,4 +1,9 @@
-{ pkgs, system, flake, ... }:
+{
+  pkgs,
+  system,
+  flake,
+  ...
+}:
 let
   rustToolchain = flake.lib.mkRustToolchain system;
   rustPlatform = pkgs.makeRustPlatform {
@@ -11,7 +16,13 @@ rustPlatform.buildRustPackage (finalAttrs: {
   pname = "winecarte-run";
   version = cargoToml.workspace.package.version;
   src = ../..;
-  cargoBuildFlags = [ "--package" finalAttrs.pname ];
-  cargoTestFlags = [ "--package" finalAttrs.pname ];
+  cargoBuildFlags = [
+    "--package"
+    finalAttrs.pname
+  ];
+  cargoTestFlags = [
+    "--package"
+    finalAttrs.pname
+  ];
   cargoLock.lockFile = ../../Cargo.lock;
 })

@@ -1,6 +1,6 @@
 use anyhow::{Context, bail};
 use clap::Parser;
-use log::{debug, info, warn, trace};
+use log::{debug, info, trace, warn};
 use std::{
     fs::{File, OpenOptions, create_dir_all, remove_file},
     io::Read,
@@ -14,7 +14,11 @@ use thiserror::Error;
 #[cfg(not(windows))]
 compile_error!("wine2linux must be built for a Windows target");
 
-use std::{io, os::windows::{ffi::OsStrExt, io::AsRawHandle}, ptr};
+use std::{
+    io,
+    os::windows::{ffi::OsStrExt, io::AsRawHandle},
+    ptr,
+};
 
 use windows_sys::Win32::{
     Foundation::{CloseHandle, WAIT_OBJECT_0, WAIT_TIMEOUT},
@@ -513,7 +517,9 @@ fn ensure_destination_mapping(path: &Path, size: usize) -> anyhow::Result<Destin
 
     let view = unsafe { MapViewOfFile(map_handle, FILE_MAP_ALL_ACCESS, 0, 0, size) }.Value;
     if view.is_null() {
-        unsafe { CloseHandle(map_handle); }
+        unsafe {
+            CloseHandle(map_handle);
+        }
         return Err(io::Error::last_os_error())
             .with_context(|| format!("failed to map view for {}", path.display()));
     }

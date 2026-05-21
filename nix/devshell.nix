@@ -1,4 +1,9 @@
-{ pkgs, system, flake, ... }:
+{
+  pkgs,
+  system,
+  flake,
+  ...
+}:
 let
   mingw = pkgs.pkgsCross.mingwW64;
 in

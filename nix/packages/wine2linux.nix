@@ -1,4 +1,9 @@
-{ pkgs, system, flake, ... }:
+{
+  pkgs,
+  system,
+  flake,
+  ...
+}:
 let
   mingw = pkgs.pkgsCross.mingwW64;
   rustToolchain = flake.lib.mkRustToolchain system;
@@ -13,8 +18,14 @@ rustPlatform.buildRustPackage (finalAttrs: {
   pname = "wine2linux";
   version = cargoToml.workspace.package.version;
   src = ../..;
-  cargoBuildFlags = [ "--package" finalAttrs.pname ];
-  cargoTestFlags = [ "--package" finalAttrs.pname ];
+  cargoBuildFlags = [
+    "--package"
+    finalAttrs.pname
+  ];
+  cargoTestFlags = [
+    "--package"
+    finalAttrs.pname
+  ];
   cargoLock.lockFile = ../../Cargo.lock;
 
   buildInputs = [ mingw.windows.pthreads ];

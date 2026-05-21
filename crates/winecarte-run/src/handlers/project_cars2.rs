@@ -1,6 +1,6 @@
 use super::common;
-use async_trait::async_trait;
 use crate::{AppContext, AppHandler};
+use async_trait::async_trait;
 use tokio::process;
 
 pub(crate) struct ProjectCars2Handler {

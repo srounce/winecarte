@@ -1,11 +1,6 @@
 use crate::{AppContext, find_on_path};
 use anyhow::{Context, bail};
-use std::{
-    path::PathBuf,
-    process::Stdio,
-    str, thread,
-    time::Duration,
-};
+use std::{path::PathBuf, process::Stdio, str, thread, time::Duration};
 use tokio::process;
 
 pub(crate) enum RunnerState {
@@ -165,7 +160,12 @@ fn proc_game_is_alive_in(
     for entry in std::fs::read_dir(proc_dir).context("failed to read /proc")? {
         let entry = entry.context("failed to read /proc entry")?;
 
-        if !entry.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit()) {
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .bytes()
+            .all(|b| b.is_ascii_digit())
+        {
             continue;
         }
 
@@ -184,7 +184,9 @@ fn proc_game_is_alive_in(
             Err(_) => continue,
         };
 
-        if process_markers.iter().any(|marker| exe_matches(argv0, marker))
+        if process_markers
+            .iter()
+            .any(|marker| exe_matches(argv0, marker))
             && !exe_matches(argv0, "wine2linux.exe")
         {
             return Ok(true);

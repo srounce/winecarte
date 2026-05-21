@@ -8,7 +8,11 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use tokio::{process, signal::unix::{SignalKind, signal}, time};
+use tokio::{
+    process,
+    signal::unix::{SignalKind, signal},
+    time,
+};
 use tokio_util::sync::CancellationToken;
 
 mod handlers;
@@ -135,10 +139,10 @@ async fn main() -> anyhow::Result<()> {
     {
         let shutdown = shutdown.clone();
         tokio::spawn(async move {
-            let mut sigterm = signal(SignalKind::terminate())
-                .expect("failed to register SIGTERM handler");
-            let mut sigint = signal(SignalKind::interrupt())
-                .expect("failed to register SIGINT handler");
+            let mut sigterm =
+                signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
+            let mut sigint =
+                signal(SignalKind::interrupt()).expect("failed to register SIGINT handler");
             tokio::select! {
                 _ = sigterm.recv() => {},
                 _ = sigint.recv() => {},

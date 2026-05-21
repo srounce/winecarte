@@ -1,6 +1,6 @@
 use super::common;
-use async_trait::async_trait;
 use crate::{AppContext, AppHandler};
+use async_trait::async_trait;
 use tokio::process;
 
 pub(crate) struct AssettoCorsaHandler {
@@ -54,7 +54,12 @@ impl AssettoCorsaHandler {
         Self {
             wine2linux_process: None,
             wine2linux_args: &Self::AC_WINE2LINUX_ARGS,
-            process_markers: &["acs.exe", "AssettoCorsa.exe", "Content Manager.exe", "Content Manager Safe.exe"],
+            process_markers: &[
+                "acs.exe",
+                "AssettoCorsa.exe",
+                "Content Manager.exe",
+                "Content Manager Safe.exe",
+            ],
         }
     }
 
@@ -86,11 +91,7 @@ impl AssettoCorsaHandler {
 #[async_trait(?Send)]
 impl AppHandler for AssettoCorsaHandler {
     fn on_start(&mut self, context: &AppContext) -> anyhow::Result<()> {
-        common::launch_wine2linux(
-            &mut self.wine2linux_process,
-            context,
-            self.wine2linux_args,
-        )
+        common::launch_wine2linux(&mut self.wine2linux_process, context, self.wine2linux_args)
     }
 
     async fn cleanup(&mut self, _context: &AppContext) -> anyhow::Result<()> {

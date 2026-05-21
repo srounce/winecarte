@@ -11,12 +11,10 @@
   };
 
   # Load the blueprint
-  outputs = inputs: inputs.blueprint {
-    inherit inputs;
-    prefix = "./nix";
-
-    nixpkgs.config = {
-      # allowUnfree = true;
+  outputs =
+    inputs:
+    inputs.blueprint {
+      inherit inputs;
+      prefix = "./nix";
     };
-  };
 }
