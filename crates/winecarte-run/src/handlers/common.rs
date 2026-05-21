@@ -55,10 +55,6 @@ pub(crate) fn resolve_runtime_launch_client(context: &AppContext) -> anyhow::Res
 }
 
 pub(crate) fn resolve_wine2linux_exe() -> anyhow::Result<PathBuf> {
-    if let Some(path) = find_on_path("wine2linux.exe") {
-        return Ok(path.canonicalize().unwrap_or(path));
-    }
-
     if let Some(path) = std::env::var_os("WINECARTE_WINE2LINUX_EXE") {
         let path = PathBuf::from(path);
         if path.exists() {
@@ -69,6 +65,10 @@ pub(crate) fn resolve_wine2linux_exe() -> anyhow::Result<PathBuf> {
             "WINECARTE_WINE2LINUX_EXE points to a missing path: {}",
             path.display()
         );
+    }
+
+    if let Some(path) = find_on_path("wine2linux.exe") {
+        return Ok(path.canonicalize().unwrap_or(path));
     }
 
     bail!("could not find wine2linux.exe on PATH; set WINECARTE_WINE2LINUX_EXE")
