@@ -74,6 +74,7 @@ jobs:
           DIR="winecarte-${GITHUB_REF_NAME}"
           mv staging "$DIR"
           chmod +x "$DIR/winecarte-run"
+          chmod +x "$DIR/winehub"
           tar -czf "${DIR}.tar.gz" "$DIR"
       - uses: softprops/action-gh-release@v2
         with:
