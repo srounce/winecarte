@@ -36,6 +36,11 @@ jobs:
           cargo build --locked --release
           --package winecarte-run --bin winecarte-run
           --target x86_64-unknown-linux-musl
+      - name: Build winehub (musl)
+        run: >
+          cargo build --locked --release
+          --package winehub --bin winehub
+          --target x86_64-unknown-linux-musl
       - name: Build wine2linux (Windows)
         run: >
           cargo build --locked --release
@@ -45,6 +50,7 @@ jobs:
         run: |
           mkdir staging
           cp target/x86_64-unknown-linux-musl/release/winecarte-run staging/
+          cp target/x86_64-unknown-linux-musl/release/winehub staging/
           cp target/x86_64-pc-windows-gnu/release/wine2linux.exe staging/
       - uses: actions/upload-artifact@v4
         with:

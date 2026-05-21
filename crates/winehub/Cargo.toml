@@ -1,0 +1,19 @@
+[package]
+name = "winehub"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+env_logger = "0.11"
+log = "0.4"
+
+[dependencies.tokio]
+version = "1"
+features = ["rt", "macros", "rt-multi-thread", "fs", "process", "io-std", "io-util", "signal", "time"]
+
+[dependencies.tokio-util]
+version = "0.7"
+features = ["codec", "io"]
