@@ -41,6 +41,15 @@ impl AssettoCorsaHandler {
         r"Local\acevo_pmf_graphics|acevo_pmf_graphics",
     ];
 
+    const ACR_WINE2LINUX_ARGS: [&'static str; 6] = [
+        "--from-wine",
+        "acpmf_physics",
+        "--from-wine",
+        "acpmf_graphics",
+        "--from-wine",
+        "acpmf_static",
+    ];
+
     pub(crate) fn assetto_corsa() -> Self {
         Self {
             wine2linux_process: None,
@@ -62,6 +71,14 @@ impl AssettoCorsaHandler {
             wine2linux_process: None,
             wine2linux_args: &Self::ACE_WINE2LINUX_ARGS,
             process_markers: &["AssettoCorsaEVO.exe"],
+        }
+    }
+
+    pub(crate) fn assetto_corsa_rally() -> Self {
+        Self {
+            wine2linux_process: None,
+            wine2linux_args: &Self::ACR_WINE2LINUX_ARGS,
+            process_markers: &["acr.exe"],
         }
     }
 }

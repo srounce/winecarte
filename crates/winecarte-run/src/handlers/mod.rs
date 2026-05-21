@@ -17,6 +17,7 @@ pub(crate) fn get_handler(appid: &str) -> Result<Box<dyn AppHandler>, StartupErr
         "244210" => Ok(Box::new(AssettoCorsaHandler::assetto_corsa())),
         "805550" => Ok(Box::new(AssettoCorsaHandler::assetto_corsa_competizione())),
         "3058630" => Ok(Box::new(AssettoCorsaHandler::assetto_corsa_evo())),
+        "3917090" => Ok(Box::new(AssettoCorsaHandler::assetto_corsa_rally())),
         "378860" => Ok(Box::new(ProjectCars2Handler::project_cars_2())),
         "1066890" => Ok(Box::new(ProjectCars2Handler::automobilista_2())),
         _ => Err(StartupError::UnsupportedAppId(appid.to_string())),
