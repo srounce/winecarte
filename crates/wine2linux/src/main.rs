@@ -844,17 +844,18 @@ fn linux_source_size(path: &Path) -> anyhow::Result<usize> {
 }
 
 fn resolve_from_linux_target_sizes(targets: &mut [FromLinuxTarget], interval: Duration) {
-    for target in targets {
-        if target.size.is_some() {
-            continue;
+    let mut logged_waiting = vec![false; targets.len()];
+
+    loop {
+        if shutdown_requested() {
+            return;
         }
 
-        let mut logged_waiting = false;
-        loop {
-            if shutdown_requested() {
-                return;
+        let mut all_resolved = true;
+        for (i, target) in targets.iter_mut().enumerate() {
+            if target.size.is_some() {
+                continue;
             }
-
             match linux_source_size(&target.source_wine_path) {
                 Ok(size) => {
                     info!(
@@ -862,20 +863,25 @@ fn resolve_from_linux_target_sizes(targets: &mut [FromLinuxTarget], interval: Du
                         target.source_host_path, size
                     );
                     target.size = Some(size);
-                    break;
                 }
                 Err(error) => {
-                    if !logged_waiting {
+                    if !logged_waiting[i] {
                         info!(
                             "waiting for Linux shared memory source {} ({error:#})",
                             target.source_host_path
                         );
-                        logged_waiting = true;
+                        logged_waiting[i] = true;
                     }
-                    thread::sleep(interval);
+                    all_resolved = false;
                 }
             }
         }
+
+        if all_resolved {
+            break;
+        }
+
+        thread::sleep(interval);
     }
 }
 
