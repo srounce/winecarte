@@ -361,7 +361,16 @@ fn resolve_wine2linux_exe(override_path: Option<PathBuf>) -> anyhow::Result<Path
         }
     }
 
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let candidate = exe_dir.join("wine2linux.exe");
+            if candidate.is_file() {
+                return Ok(candidate.canonicalize().unwrap_or(candidate));
+            }
+        }
+    }
+
     anyhow::bail!(
-        "could not find wine2linux.exe; set WINECARTE_WINE2LINUX_EXE, --wine2linux, or add to PATH"
+        "could not find wine2linux.exe! Set WINECARTE_WINE2LINUX_EXE, --wine2linux, add to PATH, or place alongside winehub"
     )
 }
