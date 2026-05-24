@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, AtomicI32, Ordering},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 
@@ -141,6 +141,7 @@ struct FromLinuxTarget {
     source_wine_path: PathBuf,
     mapping_name: String,
     size: Option<usize>,
+    waiting_logged: bool,
 }
 
 struct FromLinuxState {
@@ -473,6 +474,7 @@ fn build_from_linux_targets(args: &Args) -> Vec<FromLinuxTarget> {
             source_wine_path: linux_wine_path(&source_wine_root, &mapping.linux_path),
             mapping_name: mapping.mapping_name.clone(),
             size: mapping.size,
+            waiting_logged: false,
         })
         .collect()
 }
@@ -849,47 +851,6 @@ fn linux_source_size(path: &Path) -> anyhow::Result<usize> {
         .with_context(|| format!("Linux shared memory source {} is too large", path.display()))
 }
 
-fn resolve_from_linux_target_sizes(targets: &mut [FromLinuxTarget], interval: Duration) {
-    let mut logged_waiting = vec![false; targets.len()];
-
-    loop {
-        if shutdown_requested() {
-            return;
-        }
-
-        let mut all_resolved = true;
-        for (i, target) in targets.iter_mut().enumerate() {
-            if target.size.is_some() {
-                continue;
-            }
-            match linux_source_size(&target.source_wine_path) {
-                Ok(size) => {
-                    info!(
-                        "detected source size for {}: {} bytes",
-                        target.source_host_path, size
-                    );
-                    target.size = Some(size);
-                }
-                Err(error) => {
-                    if !logged_waiting[i] {
-                        info!(
-                            "waiting for Linux shared memory source {} ({error:#})",
-                            target.source_host_path
-                        );
-                        logged_waiting[i] = true;
-                    }
-                    all_resolved = false;
-                }
-            }
-        }
-
-        if all_resolved {
-            break;
-        }
-
-        thread::sleep(interval);
-    }
-}
 
 fn wait_for_event_ready(event_name: &str, interval: Duration) {
     let mut logged_waiting = false;
@@ -1204,7 +1165,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let from_wine_targets = build_from_wine_targets(&args);
-    let mut from_linux_targets = build_from_linux_targets(&args);
+    let from_linux_targets = build_from_linux_targets(&args);
 
     info!(
         "starting mirror loop for {} from-wine mapping(s) and {} from-linux mapping(s) with interval={}ms",
@@ -1251,20 +1212,15 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
     }
-    resolve_from_linux_target_sizes(&mut from_linux_targets, interval);
-    if shutdown_requested() {
-        info!("shutdown requested before Linux sources became ready");
-        return Ok(());
-    }
-
     let mut from_wine_states = from_wine_targets
         .into_iter()
         .map(initialize_from_wine_state)
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let mut from_linux_states = from_linux_targets
-        .into_iter()
-        .map(initialize_from_linux_state)
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut pending_from_linux = from_linux_targets;
+    let mut from_linux_states: Vec<FromLinuxState> = Vec::new();
+
+    let source_scan_interval = Duration::from_secs(1);
+    let mut last_source_scan = Instant::now() - source_scan_interval;
 
     let result = (|| -> anyhow::Result<()> {
         loop {
@@ -1284,6 +1240,36 @@ fn main() -> anyhow::Result<()> {
                 if copy_from_wine_if_changed(state, lmu_lock.as_ref(), interval)? {
                     copied_count += 1;
                 }
+            }
+
+            if !pending_from_linux.is_empty() && last_source_scan.elapsed() >= source_scan_interval {
+                last_source_scan = Instant::now();
+                let mut still_pending = Vec::with_capacity(pending_from_linux.len());
+                for mut target in pending_from_linux.drain(..) {
+                    match linux_source_size(&target.source_wine_path) {
+                        Ok(size) => {
+                            target.size = Some(size);
+                            match initialize_from_linux_state(target) {
+                                Ok(state) => {
+                                    info!("initialized from-linux source: {}", state.target.source_host_path);
+                                    from_linux_states.push(state);
+                                }
+                                Err(e) => warn!("failed to initialize from-linux source: {e:#}"),
+                            }
+                        }
+                        Err(error) => {
+                            if !target.waiting_logged {
+                                info!(
+                                    "waiting for Linux shared memory source {} ({error:#})",
+                                    target.source_host_path
+                                );
+                                target.waiting_logged = true;
+                            }
+                            still_pending.push(target);
+                        }
+                    }
+                }
+                pending_from_linux = still_pending;
             }
 
             for state in &mut from_linux_states {
