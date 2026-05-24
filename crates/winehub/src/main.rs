@@ -252,10 +252,9 @@ async fn start_bridge(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    if is_using_flatpak_shm() {
-        let shm_dir = flatpak_dev_shm_dir();
+    if let Some(shm_dir) = flatpak_dev_shm_dir() {
         log::info!("using flatpak shm dir: {}", shm_dir.display());
-        command.args(&["--dest-root", &shm_dir.to_string_lossy()]);
+        command.args(["--dest-root".as_ref(), shm_dir.as_os_str()]);
     }
 
     log::info!("launching: {wine} {bridge_exe_wine}");
@@ -278,18 +277,10 @@ async fn start_bridge(
     })
 }
 
-fn is_using_flatpak_shm() -> bool {
-    let Some(runtime_dir) = env::var_os("XDG_RUNTIME_DIR") else {
-        return false;
-    };
-    PathBuf::from(runtime_dir)
-        .join(".flatpak/com.valvesoftware.Steam/dev-shm")
-        .exists()
-}
-
-fn flatpak_dev_shm_dir() -> PathBuf {
-    PathBuf::from(env::var_os("XDG_RUNTIME_DIR").unwrap_or_default())
-        .join(".flatpak/com.valvesoftware.Steam/dev-shm")
+fn flatpak_dev_shm_dir() -> Option<PathBuf> {
+    let path = PathBuf::from(env::var_os("XDG_RUNTIME_DIR")?)
+        .join(".flatpak/com.valvesoftware.Steam/dev-shm");
+    path.exists().then_some(path)
 }
 
 async fn forward_wine_output<R>(reader: R)
