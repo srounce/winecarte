@@ -251,6 +251,18 @@ impl Drop for LmuSharedMemoryLock {
 }
 
 #[derive(Error, Debug)]
+enum ReadFromLinuxError {
+    #[error("Linux shared memory source {path} has size {actual} but expected {expected}")]
+    SizeMismatch {
+        path: PathBuf,
+        actual: usize,
+        expected: usize,
+    },
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
+#[derive(Error, Debug)]
 enum ArgParseError {
     #[error("mapping size must be greater than zero")]
     InvalidSize,
@@ -920,15 +932,14 @@ fn read_from_wine_exact(mapping_name: &str, buffer: &mut [u8]) -> anyhow::Result
     Ok(())
 }
 
-fn read_from_linux_exact(path: &Path, buffer: &mut [u8]) -> anyhow::Result<()> {
+fn read_from_linux_exact(path: &Path, buffer: &mut [u8]) -> Result<(), ReadFromLinuxError> {
     let size = linux_source_size(path)?;
     if size != buffer.len() {
-        bail!(
-            "Linux shared memory source {} has size {} but expected {}",
-            path.display(),
-            size,
-            buffer.len()
-        );
+        return Err(ReadFromLinuxError::SizeMismatch {
+            path: path.to_owned(),
+            actual: size,
+            expected: buffer.len(),
+        });
     }
 
     let mut file = File::open(path).with_context(|| {
@@ -965,6 +976,42 @@ fn wait_for_event_signal(event_name: &str, interval: Duration) -> anyhow::Result
             }
         }
     }
+}
+
+fn log_source_availability(
+    was_available: &mut bool,
+    source_name: &str,
+    result: &anyhow::Result<()>,
+) -> bool {
+    match result {
+        Ok(()) => {
+            if !*was_available {
+                info!("source became available: {source_name}");
+                *was_available = true;
+            }
+            true
+        }
+        Err(error) => {
+            if *was_available {
+                warn!("source became unavailable: {source_name} ({error:#})");
+                *was_available = false;
+            } else {
+                debug!("source still unavailable: {source_name} ({error:#})");
+            }
+            false
+        }
+    }
+}
+
+fn write_if_changed(current: &[u8], previous: &mut Vec<u8>, dest_view: *mut u8) -> bool {
+    if current == previous.as_slice() {
+        return false;
+    }
+    unsafe {
+        ptr::copy_nonoverlapping(current.as_ptr(), dest_view, current.len());
+    }
+    previous.copy_from_slice(current);
+    true
 }
 
 fn ensure_from_wine_state_ready(state: &mut FromWineState) -> anyhow::Result<bool> {
@@ -1031,32 +1078,11 @@ fn copy_from_wine_if_changed(
     };
 
     let read_result = read_from_wine_exact(&state.target.mapping_name, &mut state.current);
-
-    match read_result {
-        Ok(()) => {
-            if !state.source_was_available {
-                info!("source became available: {}", state.target.mapping_name);
-                state.source_was_available = true;
-            }
-        }
-        Err(error) => {
-            if state.source_was_available {
-                warn!(
-                    "source became unavailable: {} ({error:#})",
-                    state.target.mapping_name
-                );
-                state.source_was_available = false;
-            } else {
-                debug!(
-                    "source still unavailable: {} ({error:#})",
-                    state.target.mapping_name
-                );
-            }
-            return Ok(false);
-        }
-    }
-
-    if state.current == state.previous {
+    if !log_source_availability(
+        &mut state.source_was_available,
+        &state.target.mapping_name,
+        &read_result,
+    ) {
         return Ok(false);
     }
 
@@ -1064,77 +1090,47 @@ fn copy_from_wine_if_changed(
         .destination_mapping
         .as_ref()
         .context("from-wine destination mapping not initialized")?;
-    unsafe {
-        ptr::copy_nonoverlapping(state.current.as_ptr(), mapping.view, mapping.size);
-    }
 
-    state.previous.copy_from_slice(&state.current);
-
-    Ok(true)
+    Ok(write_if_changed(&state.current, &mut state.previous, mapping.view))
 }
 
 fn copy_from_linux_if_changed(state: &mut FromLinuxState) -> anyhow::Result<bool> {
     let read_result = read_from_linux_exact(&state.target.source_wine_path, &mut state.current);
 
-    match read_result {
-        Ok(()) => {
-            if !state.source_was_available {
-                info!("source became available: {}", state.target.source_host_path);
-                state.source_was_available = true;
-            }
-            if state.source_size_mismatch {
-                info!(
-                    "source size matches expected size again: {}",
-                    state.target.source_host_path
-                );
-                state.source_size_mismatch = false;
-            }
+    if let Err(ReadFromLinuxError::SizeMismatch { .. }) = &read_result {
+        if !state.source_size_mismatch {
+            warn!(
+                "source size mismatch: {} ({:#})",
+                state.target.source_host_path,
+                read_result.as_ref().unwrap_err()
+            );
+            state.source_size_mismatch = true;
         }
-        Err(error) => {
-            let message = format!("{error:#}");
-            let is_size_mismatch = message.contains("expected");
-
-            if is_size_mismatch {
-                if !state.source_size_mismatch {
-                    warn!(
-                        "source size mismatch: {} ({message})",
-                        state.target.source_host_path
-                    );
-                    state.source_size_mismatch = true;
-                }
-                return Ok(false);
-            }
-
-            if state.source_was_available {
-                warn!(
-                    "source became unavailable: {} ({message})",
-                    state.target.source_host_path
-                );
-                state.source_was_available = false;
-            } else {
-                debug!(
-                    "source still unavailable: {} ({message})",
-                    state.target.source_host_path
-                );
-            }
-            return Ok(false);
-        }
-    }
-
-    if state.current == state.previous {
         return Ok(false);
     }
 
-    unsafe {
-        ptr::copy_nonoverlapping(
-            state.current.as_ptr(),
-            state.destination_mapping.view,
-            state.current.len(),
+    if read_result.is_ok() && state.source_size_mismatch {
+        info!(
+            "source size matches expected size again: {}",
+            state.target.source_host_path
         );
+        state.source_size_mismatch = false;
     }
-    state.previous.copy_from_slice(&state.current);
 
-    Ok(true)
+    let read_result: anyhow::Result<()> = read_result.map_err(anyhow::Error::from);
+    if !log_source_availability(
+        &mut state.source_was_available,
+        &state.target.source_host_path,
+        &read_result,
+    ) {
+        return Ok(false);
+    }
+
+    Ok(write_if_changed(
+        &state.current,
+        &mut state.previous,
+        state.destination_mapping.view,
+    ))
 }
 
 fn main() -> anyhow::Result<()> {
