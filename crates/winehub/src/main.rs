@@ -180,6 +180,10 @@ fn find_game_process() -> Option<(u32, String, &'static GameBridge)> {
             Err(_) => continue,
         };
 
+        if is_bridge_exe(argv0) {
+            continue;
+        }
+
         for game in GAMES {
             if game.process_names.iter().any(|&m| exe_matches(argv0, m)) {
                 let pid: u32 = match entry.file_name().to_string_lossy().parse() {
@@ -215,23 +219,36 @@ async fn start_bridge(
     let exe_name = extract_exe_name(argv0);
     let bridge_dir = bridge_root(prefix).join(game.name);
 
-    // Rebuild from scratch rather than reusing: unlinking leaves a previous
-    // bridge's exe intact for as long as it is still mapped, and the setup
-    // hooks can assume an empty directory.
-    if bridge_dir
-        .symlink_metadata()
-        .is_ok_and(|meta| meta.is_dir())
-    {
-        log::info!("removing stale bridge dir: {}", bridge_dir.display());
-        std::fs::remove_dir_all(&bridge_dir)
-            .with_context(|| format!("failed to remove bridge dir: {}", bridge_dir.display()))?;
+    let exe_path = wine_argv0_to_linux_path(argv0);
+    let install_dir = exe_path
+        .as_deref()
+        .and_then(Path::parent)
+        .map(PathBuf::from);
+
+    match &install_dir {
+        Some(dir) => log::info!("game install dir: {}", dir.display()),
+        None => log::warn!("could not determine game install dir from argv0: {argv0}"),
     }
 
-    log::info!("creating bridge dir: {}", bridge_dir.display());
-    std::fs::create_dir_all(&bridge_dir)
-        .with_context(|| format!("failed to create bridge dir: {}", bridge_dir.display()))?;
+    reset_bridge_dir(&bridge_dir)?;
+
+    if game.link_sibling_dirs {
+        match &install_dir {
+            Some(dir) => link_sibling_dirs(dir, &bridge_dir, &exe_name),
+            None => log::warn!("cannot link sibling dirs without an install dir"),
+        }
+    }
 
     let bridge_exe = bridge_dir.join(&exe_name);
+    // Nothing named after the exe is ever linked, so this can only fire on a
+    // bug. Copying onto a symlink would write into the real install.
+    if bridge_exe.symlink_metadata().is_ok() {
+        anyhow::bail!(
+            "refusing to overwrite existing bridge exe: {}",
+            bridge_exe.display()
+        );
+    }
+
     log::info!(
         "copying {} → {}",
         wine2linux_exe.display(),
@@ -240,23 +257,10 @@ async fn start_bridge(
     std::fs::copy(wine2linux_exe, &bridge_exe)
         .with_context(|| format!("failed to copy wine2linux.exe to {}", bridge_exe.display()))?;
 
-    let exe_path = wine_argv0_to_linux_path(argv0);
-    let install_dir = exe_path
-        .as_ref()
-        .and_then(|p| p.parent())
-        .map(PathBuf::from)
-        .unwrap_or_default();
-
-    if !install_dir.as_os_str().is_empty() {
-        log::info!("game install dir: {}", install_dir.display());
-    } else {
-        log::warn!("could not determine game install dir from argv0: {argv0}");
-    }
-
     let context = GameContext {
         pid,
         exe_path: exe_path.unwrap_or_default(),
-        install_dir,
+        install_dir: install_dir.unwrap_or_default(),
         bridge_dir: bridge_dir.clone(),
         compat_data_path: read_compat_data_path(pid),
     };
@@ -273,9 +277,7 @@ async fn start_bridge(
         }
     }
 
-    // Built from parts rather than translated from bridge_exe, so a symlinked
-    // or otherwise non-canonical WINEPREFIX cannot throw the mapping off.
-    let bridge_exe_wine = format!(r"C:\{BRIDGE_DIR_NAME}\{}\{exe_name}", game.name);
+    let bridge_exe_wine = bridge_exe_dos_path(game.name, &exe_name);
     let mut command = process::Command::new(wine);
     command
         .arg(&bridge_exe_wine)
@@ -311,6 +313,85 @@ async fn start_bridge(
 
 fn bridge_root(prefix: &Path) -> PathBuf {
     prefix.join("drive_c").join(BRIDGE_DIR_NAME)
+}
+
+/// The DOS path a bridge exe is launched from, which is also what wine reports
+/// as that process's argv0. Built from parts rather than translated from the
+/// Linux path, so a symlinked or non-canonical WINEPREFIX cannot throw it off.
+/// `is_bridge_exe` has to recognise whatever this produces.
+fn bridge_exe_dos_path(game_name: &str, exe_name: &str) -> String {
+    format!(r"C:\{BRIDGE_DIR_NAME}\{game_name}\{exe_name}")
+}
+
+/// A bridge exe is named after the game it stands in for, so it matches the
+/// same process names the scan looks for. Without this, a second winehub — or
+/// a restart while an earlier bridge is still alive — bridges the bridge.
+/// Matching on the DOS path catches bridges from any prefix, not just ours.
+fn is_bridge_exe(argv0: &str) -> bool {
+    argv0
+        .to_ascii_lowercase()
+        .starts_with(&format!(r"c:\{BRIDGE_DIR_NAME}\"))
+}
+
+/// Rebuild from scratch rather than reusing: unlinking leaves a previous
+/// bridge's exe intact for as long as it is still mapped.
+fn reset_bridge_dir(bridge_dir: &Path) -> anyhow::Result<()> {
+    // symlink_metadata, so a link squatting on the path is unlinked rather than
+    // followed into whatever it points at.
+    match bridge_dir.symlink_metadata() {
+        Ok(meta) if meta.is_dir() => {
+            log::info!("removing stale bridge dir: {}", bridge_dir.display());
+            std::fs::remove_dir_all(bridge_dir)
+                .with_context(|| format!("failed to remove bridge dir: {}", bridge_dir.display()))?
+        }
+        Ok(_) => {
+            log::warn!("removing non-directory at {}", bridge_dir.display());
+            std::fs::remove_file(bridge_dir)
+                .with_context(|| format!("failed to remove {}", bridge_dir.display()))?
+        }
+        Err(_) => {}
+    }
+
+    log::info!("creating bridge dir: {}", bridge_dir.display());
+    std::fs::create_dir_all(bridge_dir)
+        .with_context(|| format!("failed to create bridge dir: {}", bridge_dir.display()))
+}
+
+/// Symlinks every directory sitting alongside the game exe into the bridge dir,
+/// so tools that resolve game data relative to the running exe find it.
+///
+/// Best effort throughout: shared memory bridging is the primary job and does
+/// not depend on these links, so nothing here is worth failing a bridge over.
+fn link_sibling_dirs(install_dir: &Path, bridge_dir: &Path, exe_name: &str) {
+    let entries = match std::fs::read_dir(install_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            log::warn!("failed to read install dir {}: {e}", install_dir.display());
+            return;
+        }
+    };
+
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        // The bridge exe is copied into this same directory, and copying onto a
+        // symlink would write through it into the real install.
+        if name == *exe_name {
+            continue;
+        }
+
+        // is_dir follows links, so a directory reached through one still counts
+        // and a broken link is skipped.
+        let target = entry.path();
+        if !target.is_dir() {
+            continue;
+        }
+
+        let link = bridge_dir.join(&name);
+        match std::os::unix::fs::symlink(&target, &link) {
+            Ok(()) => log::info!("linked {} → {}", target.display(), link.display()),
+            Err(e) => log::warn!("failed to symlink {}: {e}", link.display()),
+        }
+    }
 }
 
 fn flatpak_dev_shm_dir() -> Option<PathBuf> {

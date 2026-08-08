@@ -1,4 +1,3 @@
-use anyhow::Context;
 use std::path::PathBuf;
 
 #[allow(dead_code)]
@@ -14,6 +13,9 @@ pub struct GameBridge {
     /// Slug identifying the game. Names the game's persistent bridge directory.
     pub name: &'static str,
     pub process_names: &'static [&'static str],
+    /// Symlink every directory sitting alongside the game exe into the bridge
+    /// dir, for games whose tools resolve data relative to the running exe.
+    pub link_sibling_dirs: bool,
     pub from_linux_args: &'static [&'static str],
     pub setup: Option<fn(&GameContext) -> anyhow::Result<()>>,
     pub teardown: Option<fn(&GameContext) -> anyhow::Result<()>>,
@@ -23,6 +25,7 @@ pub static GAMES: &[GameBridge] = &[
     GameBridge {
         name: "assetto-corsa",
         process_names: &["acs.exe"],
+        link_sibling_dirs: true,
         from_linux_args: &[
             "--from-linux",
             r"acpmf_physics|Local\acpmf_physics",
@@ -37,12 +40,13 @@ pub static GAMES: &[GameBridge] = &[
             "--from-linux",
             r"acpmf_secondMonitor|Local\acpmf_secondMonitor",
         ],
-        setup: Some(ac_setup),
+        setup: None,
         teardown: None,
     },
     GameBridge {
         name: "assetto-corsa-competizione",
         process_names: &["AC2-Win64-Shipping.exe"],
+        link_sibling_dirs: false,
         from_linux_args: &[
             "--from-linux",
             r"acpmf_physics|Local\acpmf_physics",
@@ -57,6 +61,7 @@ pub static GAMES: &[GameBridge] = &[
     GameBridge {
         name: "assetto-corsa-evo",
         process_names: &["AssettoCorsaEVO.exe"],
+        link_sibling_dirs: false,
         from_linux_args: &[
             "--from-linux",
             r"acevo_pmf_static|Local\acevo_pmf_static",
@@ -71,6 +76,7 @@ pub static GAMES: &[GameBridge] = &[
     GameBridge {
         name: "assetto-corsa-rally",
         process_names: &["acr.exe"],
+        link_sibling_dirs: false,
         from_linux_args: &[
             "--from-linux",
             r"acpmf_physics|Local\acpmf_physics",
@@ -85,6 +91,7 @@ pub static GAMES: &[GameBridge] = &[
     GameBridge {
         name: "rfactor2",
         process_names: &["rFactor2.exe"],
+        link_sibling_dirs: false,
         from_linux_args: &[
             "--from-linux",
             "$rFactor2SMMP_Telemetry$",
@@ -119,6 +126,7 @@ pub static GAMES: &[GameBridge] = &[
     GameBridge {
         name: "le-mans-ultimate",
         process_names: &["Le Mans Ultimate.exe"],
+        link_sibling_dirs: true,
         from_linux_args: &[
             "--from-linux",
             "LMU_Data",
@@ -155,6 +163,7 @@ pub static GAMES: &[GameBridge] = &[
     GameBridge {
         name: "project-cars-2",
         process_names: &["pCARS2AVX.exe"],
+        link_sibling_dirs: false,
         from_linux_args: &["--from-linux", "$pcars2$"],
         setup: None,
         teardown: None,
@@ -162,6 +171,7 @@ pub static GAMES: &[GameBridge] = &[
     GameBridge {
         name: "automobilista-2",
         process_names: &["AMS2AVX.exe"],
+        link_sibling_dirs: false,
         from_linux_args: &["--from-linux", "$pcars2$"],
         setup: None,
         teardown: None,
@@ -169,6 +179,7 @@ pub static GAMES: &[GameBridge] = &[
     GameBridge {
         name: "euro-truck-simulator-2",
         process_names: &["eurotrucks2.exe"],
+        link_sibling_dirs: false,
         from_linux_args: &["--from-linux", r"SHSCSTelemetry|Local\SHSCSTelemetry"],
         setup: None,
         teardown: None,
@@ -176,15 +187,9 @@ pub static GAMES: &[GameBridge] = &[
     GameBridge {
         name: "american-truck-simulator",
         process_names: &["amtrucks.exe"],
+        link_sibling_dirs: false,
         from_linux_args: &["--from-linux", r"SHSCSTelemetry|Local\SHSCSTelemetry"],
         setup: None,
         teardown: None,
     },
 ];
-
-fn ac_setup(ctx: &GameContext) -> anyhow::Result<()> {
-    let src = ctx.install_dir.join("content");
-    let dst = ctx.bridge_dir.join("content");
-    std::os::unix::fs::symlink(&src, &dst)
-        .with_context(|| format!("failed to symlink {} to {}", src.display(), dst.display()))
-}
