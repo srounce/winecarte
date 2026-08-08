@@ -31,6 +31,8 @@ pub static GAMES: &[GameBridge] = &[
             r"acpmf_simhub_v2|Local\acpmf_simhub_v2",
             "--from-linux",
             r"acpmf_crewchief|Local\acpmf_crewchief",
+            "--from-linux",
+            r"acpmf_secondMonitor|Local\acpmf_secondMonitor",
         ],
         setup: Some(ac_setup),
         teardown: None,

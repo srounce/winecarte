@@ -10,7 +10,7 @@ pub(crate) struct AssettoCorsaHandler {
 }
 
 impl AssettoCorsaHandler {
-    const AC_WINE2LINUX_ARGS: [&'static str; 10] = [
+    const AC_WINE2LINUX_ARGS: [&'static str; 12] = [
         "--from-wine",
         "acpmf_physics",
         "--from-wine",
@@ -21,6 +21,8 @@ impl AssettoCorsaHandler {
         "acpmf_simhub_v2",
         "--from-wine",
         "acpmf_crewchief",
+        "--from-wine",
+        "acpmf_secondMonitor",
     ];
 
     const ACC_WINE2LINUX_ARGS: [&'static str; 6] = [
