@@ -32,7 +32,8 @@ struct Args {
     #[arg(long, env = "WINEHUB_WINE", default_value = "wine")]
     wine: String,
 
-    /// Path to wine2linux.exe. Falls back to $WINECARTE_WINE2LINUX_EXE then PATH.
+    /// Path to wine2linux.exe. Falls back to $WINECARTE_WINE2LINUX_EXE, then a
+    /// copy alongside winehub.exe, then PATH.
     #[arg(long, env = "WINECARTE_WINE2LINUX_EXE")]
     wine2linux: Option<PathBuf>,
 
@@ -364,20 +365,22 @@ fn resolve_wine2linux_exe(override_path: Option<PathBuf>) -> anyhow::Result<Path
         anyhow::bail!("wine2linux path does not exist: {}", path.display());
     }
 
-    let path_env = env::var_os("PATH").unwrap_or_default();
-    for dir in env::split_paths(&path_env) {
-        let candidate = dir.join("wine2linux.exe");
-        if candidate.is_file() {
-            return Ok(candidate.canonicalize().unwrap_or(candidate));
-        }
-    }
-
+    // Prefer a sibling build so a winehub copy stays paired with its own
+    // wine2linux rather than whichever one happens to be installed on PATH.
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
             let candidate = exe_dir.join("wine2linux.exe");
             if candidate.is_file() {
                 return Ok(candidate.canonicalize().unwrap_or(candidate));
             }
+        }
+    }
+
+    let path_env = env::var_os("PATH").unwrap_or_default();
+    for dir in env::split_paths(&path_env) {
+        let candidate = dir.join("wine2linux.exe");
+        if candidate.is_file() {
+            return Ok(candidate.canonicalize().unwrap_or(candidate));
         }
     }
 

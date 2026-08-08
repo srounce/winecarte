@@ -62,10 +62,8 @@ pub(crate) fn resolve_wine2linux_exe() -> anyhow::Result<PathBuf> {
         );
     }
 
-    if let Some(path) = find_on_path("wine2linux.exe") {
-        return Ok(path.canonicalize().unwrap_or(path));
-    }
-
+    // Prefer a sibling build so a winecarte-run copy stays paired with its own
+    // wine2linux rather than whichever one happens to be installed on PATH.
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
             let candidate = exe_dir.join("wine2linux.exe");
@@ -75,8 +73,12 @@ pub(crate) fn resolve_wine2linux_exe() -> anyhow::Result<PathBuf> {
         }
     }
 
+    if let Some(path) = find_on_path("wine2linux.exe") {
+        return Ok(path.canonicalize().unwrap_or(path));
+    }
+
     bail!(
-        "could not find wine2linux.exe! Set WINECARTE_WINE2LINUX_EXE, --wine2linux, add to PATH, or place alongside winehub"
+        "could not find wine2linux.exe! Set WINECARTE_WINE2LINUX_EXE, add to PATH, or place alongside winecarte-run"
     )
 }
 
