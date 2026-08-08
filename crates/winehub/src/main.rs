@@ -5,7 +5,6 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     str,
-    sync::atomic::{AtomicU32, Ordering},
 };
 use tokio::{
     io::AsyncBufReadExt,
@@ -18,7 +17,10 @@ use tokio_util::sync::CancellationToken;
 mod games;
 use games::{GAMES, GameBridge, GameContext};
 
-static BRIDGE_COUNTER: AtomicU32 = AtomicU32::new(0);
+/// Bridge directories live inside the prefix so the fake game exe gets a real
+/// `C:\` path, and so tools that inspect it are looking at a stable location
+/// that outlives any single session.
+const BRIDGE_DIR_NAME: &str = "winecarte";
 
 #[derive(Parser, Debug)]
 #[command(version, about = "SimHub shared memory bridge for Wine games")]
@@ -40,6 +42,10 @@ struct Args {
     /// Interval in milliseconds between game process scans.
     #[arg(long, default_value = "1000")]
     poll_ms: u64,
+
+    /// Remove all persistent bridge directories from the prefix on startup.
+    #[arg(long)]
+    clean_bridges: bool,
 }
 
 struct Bridge {
@@ -67,6 +73,18 @@ async fn main() -> anyhow::Result<()> {
 
     if !prefix.exists() {
         anyhow::bail!("Wine prefix does not exist: {}", prefix.display());
+    }
+
+    if args.clean_bridges {
+        let root = bridge_root(&prefix);
+        log::info!("removing bridge root: {}", root.display());
+        match std::fs::remove_dir_all(&root) {
+            Ok(()) => log::info!("bridge root removed"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                log::info!("no bridge root to remove")
+            }
+            Err(e) => anyhow::bail!("failed to remove bridge root {}: {e}", root.display()),
+        }
     }
 
     let wine2linux_exe = resolve_wine2linux_exe(args.wine2linux)?;
@@ -109,7 +127,7 @@ async fn main() -> anyhow::Result<()> {
                 cleanup_bridge(active.take().unwrap()).await;
             }
         } else if let Some((pid, argv0, game)) = find_game_process() {
-            log::info!("detected game process: {argv0} (pid {pid})");
+            log::info!("detected {} process: {argv0} (pid {pid})", game.name);
             match start_bridge(game, pid, &argv0, &prefix, &args.wine, &wine2linux_exe).await {
                 Ok(bridge) => {
                     log::info!("bridge running for {argv0}");
@@ -195,8 +213,19 @@ async fn start_bridge(
     wine2linux_exe: &Path,
 ) -> anyhow::Result<Bridge> {
     let exe_name = extract_exe_name(argv0);
-    let count = BRIDGE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let bridge_dir = env::temp_dir().join(format!("winehub-{}-{count}", std::process::id()));
+    let bridge_dir = bridge_root(prefix).join(game.name);
+
+    // Rebuild from scratch rather than reusing: unlinking leaves a previous
+    // bridge's exe intact for as long as it is still mapped, and the setup
+    // hooks can assume an empty directory.
+    if bridge_dir
+        .symlink_metadata()
+        .is_ok_and(|meta| meta.is_dir())
+    {
+        log::info!("removing stale bridge dir: {}", bridge_dir.display());
+        std::fs::remove_dir_all(&bridge_dir)
+            .with_context(|| format!("failed to remove bridge dir: {}", bridge_dir.display()))?;
+    }
 
     log::info!("creating bridge dir: {}", bridge_dir.display());
     std::fs::create_dir_all(&bridge_dir)
@@ -244,7 +273,9 @@ async fn start_bridge(
         }
     }
 
-    let bridge_exe_wine = linux_path_to_wine(&bridge_exe);
+    // Built from parts rather than translated from bridge_exe, so a symlinked
+    // or otherwise non-canonical WINEPREFIX cannot throw the mapping off.
+    let bridge_exe_wine = format!(r"C:\{BRIDGE_DIR_NAME}\{}\{exe_name}", game.name);
     let mut command = process::Command::new(wine);
     command
         .arg(&bridge_exe_wine)
@@ -278,6 +309,10 @@ async fn start_bridge(
     })
 }
 
+fn bridge_root(prefix: &Path) -> PathBuf {
+    prefix.join("drive_c").join(BRIDGE_DIR_NAME)
+}
+
 fn flatpak_dev_shm_dir() -> Option<PathBuf> {
     let path = PathBuf::from(env::var_os("XDG_RUNTIME_DIR")?)
         .join(".flatpak/com.valvesoftware.Steam/dev-shm");
@@ -309,13 +344,8 @@ async fn cleanup_bridge(mut bridge: Bridge) {
         }
     }
 
-    log::info!(
-        "removing bridge dir: {}",
-        bridge.context.bridge_dir.display()
-    );
-    if let Err(e) = std::fs::remove_dir_all(&bridge.context.bridge_dir) {
-        log::warn!("failed to remove bridge dir: {e}");
-    }
+    // The bridge dir deliberately outlives the session: tools that act on game
+    // exit still resolve paths through it after winehub has moved on.
 }
 
 fn extract_exe_name(argv0: &str) -> String {
@@ -324,15 +354,6 @@ fn extract_exe_name(argv0: &str) -> String {
         .next()
         .unwrap_or(argv0)
         .to_string()
-}
-
-fn linux_path_to_wine(path: &Path) -> String {
-    let s = path.to_string_lossy();
-    if let Some(rest) = s.strip_prefix('/') {
-        format!("Z:\\{}", rest.replace('/', "\\"))
-    } else {
-        s.replace('/', "\\")
-    }
 }
 
 fn wine_argv0_to_linux_path(argv0: &str) -> Option<PathBuf> {

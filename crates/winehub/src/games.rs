@@ -11,6 +11,8 @@ pub struct GameContext {
 }
 
 pub struct GameBridge {
+    /// Slug identifying the game. Names the game's persistent bridge directory.
+    pub name: &'static str,
     pub process_names: &'static [&'static str],
     pub from_linux_args: &'static [&'static str],
     pub setup: Option<fn(&GameContext) -> anyhow::Result<()>>,
@@ -19,6 +21,7 @@ pub struct GameBridge {
 
 pub static GAMES: &[GameBridge] = &[
     GameBridge {
+        name: "assetto-corsa",
         process_names: &["acs.exe"],
         from_linux_args: &[
             "--from-linux",
@@ -38,6 +41,7 @@ pub static GAMES: &[GameBridge] = &[
         teardown: None,
     },
     GameBridge {
+        name: "assetto-corsa-competizione",
         process_names: &["AC2-Win64-Shipping.exe"],
         from_linux_args: &[
             "--from-linux",
@@ -51,6 +55,7 @@ pub static GAMES: &[GameBridge] = &[
         teardown: None,
     },
     GameBridge {
+        name: "assetto-corsa-evo",
         process_names: &["AssettoCorsaEVO.exe"],
         from_linux_args: &[
             "--from-linux",
@@ -64,6 +69,7 @@ pub static GAMES: &[GameBridge] = &[
         teardown: None,
     },
     GameBridge {
+        name: "assetto-corsa-rally",
         process_names: &["acr.exe"],
         from_linux_args: &[
             "--from-linux",
@@ -77,6 +83,7 @@ pub static GAMES: &[GameBridge] = &[
         teardown: None,
     },
     GameBridge {
+        name: "rfactor2",
         process_names: &["rFactor2.exe"],
         from_linux_args: &[
             "--from-linux",
@@ -110,6 +117,7 @@ pub static GAMES: &[GameBridge] = &[
         teardown: None,
     },
     GameBridge {
+        name: "le-mans-ultimate",
         process_names: &["Le Mans Ultimate.exe"],
         from_linux_args: &[
             "--from-linux",
@@ -145,24 +153,28 @@ pub static GAMES: &[GameBridge] = &[
         teardown: None,
     },
     GameBridge {
+        name: "project-cars-2",
         process_names: &["pCARS2AVX.exe"],
         from_linux_args: &["--from-linux", "$pcars2$"],
         setup: None,
         teardown: None,
     },
     GameBridge {
+        name: "automobilista-2",
         process_names: &["AMS2AVX.exe"],
         from_linux_args: &["--from-linux", "$pcars2$"],
         setup: None,
         teardown: None,
     },
     GameBridge {
+        name: "euro-truck-simulator-2",
         process_names: &["eurotrucks2.exe"],
         from_linux_args: &["--from-linux", r"SHSCSTelemetry|Local\SHSCSTelemetry"],
         setup: None,
         teardown: None,
     },
     GameBridge {
+        name: "american-truck-simulator",
         process_names: &["amtrucks.exe"],
         from_linux_args: &["--from-linux", r"SHSCSTelemetry|Local\SHSCSTelemetry"],
         setup: None,
