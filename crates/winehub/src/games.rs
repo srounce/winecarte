@@ -170,8 +170,8 @@ pub static GAMES: &[GameBridge] = &[
     },
     GameBridge {
         name: "automobilista-2",
-        process_names: &["AMS2AVX.exe"],
-        link_sibling_dirs: false,
+        process_names: &["AMS2.exe", "AMS2AVX.exe"],
+        link_sibling_dirs: true,
         from_linux_args: &["--from-linux", "$pcars2$"],
         setup: None,
         teardown: None,
