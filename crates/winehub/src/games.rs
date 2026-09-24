@@ -192,4 +192,12 @@ pub static GAMES: &[GameBridge] = &[
         setup: None,
         teardown: None,
     },
+    GameBridge {
+        name: "raceroom",
+        process_names: &["RRRE.exe", "RRRE64.exe"],
+        link_sibling_dirs: false,
+        from_linux_args: &["--from-linux", r"$R3E|Local\$R3E"],
+        setup: None,
+        teardown: None,
+    },
 ];

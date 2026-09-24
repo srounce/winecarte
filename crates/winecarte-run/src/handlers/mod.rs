@@ -3,6 +3,7 @@ mod common;
 mod le_mans_ultimate;
 mod project_cars2;
 mod scs_sim;
+mod raceroom;
 
 use crate::{AppHandler, StartupError};
 
@@ -11,6 +12,7 @@ pub(crate) use common::RunnerState;
 pub(crate) use le_mans_ultimate::LeMansUltimateHandler;
 pub(crate) use project_cars2::ProjectCars2Handler;
 pub(crate) use scs_sim::SCSSimHandler;
+pub(crate) use raceroom::RaceRoomHandler;
 
 pub(crate) fn get_handler(appid: &str) -> Result<Box<dyn AppHandler>, StartupError> {
     match appid {
@@ -24,6 +26,7 @@ pub(crate) fn get_handler(appid: &str) -> Result<Box<dyn AppHandler>, StartupErr
         "1066890" => Ok(Box::new(ProjectCars2Handler::automobilista_2())),
         "227300" => Ok(Box::new(SCSSimHandler::ets2())),
         "270880" => Ok(Box::new(SCSSimHandler::ats())),
+        "211500" => Ok(Box::new(RaceRoomHandler::raceroom())),
         _ => Err(StartupError::UnsupportedAppId(appid.to_string())),
     }
 }
