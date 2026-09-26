@@ -200,4 +200,33 @@ pub static GAMES: &[GameBridge] = &[
         setup: None,
         teardown: None,
     },
+    GameBridge {
+        name: "dirt-rally-2",
+        process_names: &["dirtrally2.exe"],
+        link_sibling_dirs: false,
+        // Telemetry is UDP, which already reaches the SimHub prefix; the
+        // bridge only stands in for the exe so SimHub detects the game.
+        from_linux_args: &["--stand-in"],
+        setup: None,
+        teardown: None,
+    },
+    GameBridge {
+        name: "beamng-drive",
+        // The native Linux build is detected too; its stand-in gets `.exe`.
+        process_names: &["BeamNG.drive.x64.exe", "BeamNG.drive.x64"],
+        link_sibling_dirs: false,
+        // OutGauge/MotionSim telemetry is UDP, so this is a stand-in only.
+        from_linux_args: &["--stand-in"],
+        setup: None,
+        teardown: None,
+    },
+    GameBridge {
+        name: "wreckfest-2",
+        process_names: &["Wreckfest2.exe"],
+        link_sibling_dirs: false,
+        // "Pino" telemetry is UDP, so this is a stand-in only.
+        from_linux_args: &["--stand-in"],
+        setup: None,
+        teardown: None,
+    },
 ];
