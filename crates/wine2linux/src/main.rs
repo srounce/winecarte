@@ -94,6 +94,11 @@ struct Args {
     /// Create LMU's lock objects and use them around reads.
     #[arg(long, default_value_t = false)]
     lmu_lock: bool,
+
+    /// Allow running with no mappings, purely as a stand-in process for tools
+    /// that detect a game by its exe name.
+    #[arg(long, default_value_t = false)]
+    stand_in: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1148,7 +1153,11 @@ fn main() -> anyhow::Result<()> {
             "--map is deprecated and will be removed in a future version; use --from-wine instead"
         );
     }
-    if args.mappings.is_empty() && args.from_wine.is_empty() && args.from_linux.is_empty() {
+    if args.mappings.is_empty()
+        && args.from_wine.is_empty()
+        && args.from_linux.is_empty()
+        && !args.stand_in
+    {
         bail!("at least one mapping must be provided via --map, --from-wine, or --from-linux");
     }
     install_console_ctrl_handler()?;
