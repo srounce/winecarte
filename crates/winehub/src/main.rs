@@ -216,7 +216,7 @@ async fn start_bridge(
     wine: &str,
     wine2linux_exe: &Path,
 ) -> anyhow::Result<Bridge> {
-    let exe_name = extract_exe_name(argv0);
+    let exe_name = stand_in_exe_name(argv0);
     let bridge_dir = bridge_root(prefix).join(game.name);
 
     let exe_path = wine_argv0_to_linux_path(argv0);
@@ -435,6 +435,17 @@ fn extract_exe_name(argv0: &str) -> String {
         .next()
         .unwrap_or(argv0)
         .to_string()
+}
+
+/// Native Linux builds of a game have no `.exe` suffix, but the bridge exe is
+/// always a Windows binary and tools in the prefix look for the Windows name.
+fn stand_in_exe_name(argv0: &str) -> String {
+    let exe_name = extract_exe_name(argv0);
+    if exe_name.to_ascii_lowercase().ends_with(".exe") {
+        exe_name
+    } else {
+        format!("{exe_name}.exe")
+    }
 }
 
 fn wine_argv0_to_linux_path(argv0: &str) -> Option<PathBuf> {
