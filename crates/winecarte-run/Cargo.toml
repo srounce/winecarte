@@ -7,19 +7,14 @@ edition = "2024"
 thiserror = "2"
 anyhow = "1"
 clap = { version = "4", features = [ "derive" ] }
-tokio-stream = "0.1"
-async-trait = "0.1"
 env_logger = "0.11.10"
 log = "0.4.29"
+winecarte-core = { path = "../winecarte-core" }
 
 [dependencies.tokio]
 version = "1"
-features = ["rt", "macros", "rt-multi-thread", "fs", "process", "io-std", "io-util", "signal"]
+features = ["rt", "macros", "rt-multi-thread", "fs", "process", "io-std", "io-util", "signal", "time"]
 
 [dependencies.tokio-util]
 version="0.7.7"
 features = ["codec", "io"]
-
-[dev-dependencies]
-tempfile = "3"
-

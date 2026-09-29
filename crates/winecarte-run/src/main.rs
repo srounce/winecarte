@@ -1,9 +1,8 @@
 use anyhow::Context;
-use async_trait::async_trait;
 use clap::Parser;
 use std::{
     env,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Stdio,
     time::{Duration, Instant},
 };
@@ -14,9 +13,13 @@ use tokio::{
     time,
 };
 use tokio_util::sync::CancellationToken;
+use winecarte_core::{
+    games::{self, Game},
+    launch::{self, SteamSession},
+    procscan,
+};
 
-mod handlers;
-use handlers::{RunnerState, get_handler};
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -56,17 +59,75 @@ struct AppContext {
     steam_appid: String,
 }
 
-pub(crate) fn find_on_path(program: &str) -> Option<PathBuf> {
-    let path = env::var_os("PATH")?;
-
-    env::split_paths(&path).find_map(|dir| {
-        let candidate = dir.join(program);
-        if candidate.is_file() {
-            Some(candidate)
-        } else {
-            None
+impl AppContext {
+    fn session(&self) -> SteamSession<'_> {
+        SteamSession {
+            compat_data_path: &self.compat_data_path,
+            steam_linux_runtime_path: &self.steam_linux_runtime_path,
+            steam_appid: &self.steam_appid,
         }
-    })
+    }
+}
+
+enum RunnerState {
+    /// Game command launched, waiting for the real game process to appear.
+    WaitingForGame,
+    /// Game process has been seen and is still alive.
+    Running,
+    /// Game process has exited, and winecarte-run is shutting down wine2linux.
+    CleanUp,
+    /// Cleanup is done and winecarte-run is exiting or has exited.
+    Completed,
+    /// Terminal failure state for launch timeout, launch error, or helper cleanup failure.
+    Failed,
+}
+
+struct GameRunner {
+    game: &'static Game,
+    wine2linux: Option<process::Child>,
+    /// Game exe plus its launchers: the session counts as alive while any of
+    /// them runs, so a launcher that outlives the game does not cut it short.
+    alive_markers: Vec<&'static str>,
+}
+
+impl GameRunner {
+    fn new(game: &'static Game) -> Self {
+        Self {
+            game,
+            wine2linux: None,
+            alive_markers: game
+                .process_names
+                .iter()
+                .chain(game.launcher_names)
+                .copied()
+                .collect(),
+        }
+    }
+
+    fn on_start(&mut self, context: &AppContext) -> anyhow::Result<()> {
+        let wine2linux_exe = launch::resolve_wine2linux_exe(
+            env::var_os("WINECARTE_WINE2LINUX_EXE").map(Into::into),
+        )?;
+        log::info!("using wine2linux: {}", wine2linux_exe.display());
+        let child = launch::launch_via_launcher_service(
+            &context.session(),
+            &wine2linux_exe,
+            self.game.from_wine_args,
+        )?;
+        self.wine2linux = Some(child);
+        Ok(())
+    }
+
+    async fn cleanup(&mut self) {
+        if let Some(mut child) = self.wine2linux.take() {
+            launch::stop_wine2linux(&mut child).await;
+        }
+    }
+
+    fn game_is_alive(&self) -> anyhow::Result<bool> {
+        procscan::game_is_alive(Path::new("/proc"), &self.alive_markers)
+            .context("failed to read /proc")
+    }
 }
 
 #[tokio::main]
@@ -81,50 +142,36 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
 
-    let steam_appid = std::env::var("SteamAppId").map_err(|_| StartupError::MissingAppId)?;
+    let steam_appid = env::var("SteamAppId").map_err(|_| StartupError::MissingAppId)?;
     let handler_appid = args.appid.clone().unwrap_or_else(|| steam_appid.clone());
 
-    let compat_data_path = std::env::var("STEAM_COMPAT_DATA_PATH")
+    let compat_data_path = env::var("STEAM_COMPAT_DATA_PATH")
         .map_err(|_| StartupError::MissingCompatDataPath)
-        .map(PathBuf::from)
-        .map(|mut path| {
-            path.push("pfx");
-            path
-        })
+        .map(|p| PathBuf::from(p).join("pfx"))
         .and_then(|path| match path.exists() {
             true => Ok(path),
             false => Err(StartupError::InvalidCompatDataPath),
         })?;
 
-    let (compat_tool_path, steam_linux_runtime_path) = std::env::var("STEAM_COMPAT_TOOL_PATHS")
+    let (compat_tool_path, steam_linux_runtime_path) = env::var("STEAM_COMPAT_TOOL_PATHS")
         .map_err(|_| StartupError::MissingCompatToolPath)
         .and_then(|value| {
-            value
-                .split_once(':')
-                .map(|(first, second)| (PathBuf::from(first), PathBuf::from(second)))
-                .ok_or(StartupError::InvalidCompatToolPath)
+            SteamSession::split_tool_paths(&value).ok_or(StartupError::InvalidCompatToolPath)
         })
-        .and_then(|(compat_tool_path, steam_linux_runtime_path)| {
-            if !compat_tool_path.exists() || !steam_linux_runtime_path.exists() {
+        .and_then(|(tool, runtime)| {
+            if !tool.exists() || !runtime.exists() {
                 return Err(StartupError::InvalidCompatToolPath);
             }
-
-            Ok((compat_tool_path, steam_linux_runtime_path))
+            Ok((tool, runtime))
         })?;
 
     log::info!("Wrapping handler AppId: {handler_appid}");
     log::info!("Steam AppId: {steam_appid}");
-    log::info!(
-        "Proton path: {}",
-        compat_tool_path.to_str().unwrap_or_default()
-    );
-    log::info!(
-        "Prefix path: {}",
-        compat_data_path.to_str().unwrap_or_default()
-    );
+    log::info!("Proton path: {}", compat_tool_path.display());
+    log::info!("Prefix path: {}", compat_data_path.display());
     log::info!(
         "Steam Linux Runtime path: {}",
-        steam_linux_runtime_path.to_str().unwrap_or_default()
+        steam_linux_runtime_path.display()
     );
 
     let context = AppContext {
@@ -135,7 +182,6 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let shutdown = CancellationToken::new();
-
     {
         let shutdown = shutdown.clone();
         tokio::spawn(async move {
@@ -152,8 +198,9 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    let mut handler = get_handler(&context.handler_appid)?;
-    handler.setup(&context)?;
+    let game = games::by_appid(&context.handler_appid)
+        .ok_or_else(|| StartupError::UnsupportedAppId(context.handler_appid.clone()))?;
+    let mut runner = GameRunner::new(game);
 
     if args.startup_command.is_empty() {
         return Err(StartupError::MissingStartupCommand.into());
@@ -171,33 +218,26 @@ async fn main() -> anyhow::Result<()> {
     log::info!("Running: {command:?}");
     let mut child_process = command.spawn().with_context(|| "Child command failure")?;
     log::info!("spawned launcher child for app {}", context.handler_appid);
-    run_handler_loop(&context, &mut *handler, &mut child_process, shutdown).await
+    run_handler_loop(&context, &mut runner, &mut child_process, shutdown).await
 }
 
 async fn run_handler_loop(
     context: &AppContext,
-    handler: &mut dyn AppHandler,
+    runner: &mut GameRunner,
     child_process: &mut process::Child,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
-    let mut state = RunnerState::PreStart;
+    let mut state = RunnerState::WaitingForGame;
     let mut helper_started = false;
     let mut failure = None;
-    let startup_deadline = Instant::now() + handler.startup_timeout();
+    let startup_deadline = Instant::now() + STARTUP_TIMEOUT;
     let mut launcher_exit_status = None;
+    let appid = &context.handler_appid;
 
     loop {
         match state {
-            RunnerState::PreStart => {
-                log::info!("runner state=PreStart for app {}", context.handler_appid);
-                state = RunnerState::WaitingForGame;
-                continue;
-            }
             RunnerState::WaitingForGame => {
-                log::debug!(
-                    "runner state=WaitingForGame for app {}",
-                    context.handler_appid
-                );
+                log::debug!("runner state=WaitingForGame for app {appid}");
                 tokio::select! {
                     _ = time::sleep(Duration::from_secs(1)) => {},
                     _ = shutdown.cancelled() => {
@@ -206,10 +246,10 @@ async fn run_handler_loop(
                     }
                     status = child_process.wait(), if launcher_exit_status.is_none() => {
                         launcher_exit_status = Some(status?);
-                        log::info!("launcher exited for app {}; checking for game process", context.handler_appid);
-                        if handler.probe_game_process(context)? {
-                            log::info!("detected game startup for app {}", context.handler_appid);
-                            handler.on_start(context)?;
+                        log::info!("launcher exited for app {appid}; checking for game process");
+                        if runner.game_is_alive()? {
+                            log::info!("detected game startup for app {appid}");
+                            runner.on_start(context)?;
                             helper_started = true;
                             state = RunnerState::Running;
                         } else {
@@ -219,9 +259,9 @@ async fn run_handler_loop(
                     }
                 }
 
-                if handler.probe_game_process(context)? {
-                    log::info!("detected game startup for app {}", context.handler_appid);
-                    handler.on_start(context)?;
+                if runner.game_is_alive()? {
+                    log::info!("detected game startup for app {appid}");
+                    runner.on_start(context)?;
                     helper_started = true;
                     state = RunnerState::Running;
                     continue;
@@ -229,15 +269,14 @@ async fn run_handler_loop(
 
                 if Instant::now() >= startup_deadline {
                     failure = Some(anyhow::anyhow!(
-                        "timed out waiting for game startup for app {}",
-                        context.handler_appid
+                        "timed out waiting for game startup for app {appid}"
                     ));
                     state = RunnerState::Failed;
                     continue;
                 }
             }
             RunnerState::Running => {
-                log::debug!("runner state=Running for app {}", context.handler_appid);
+                log::debug!("runner state=Running for app {appid}");
                 tokio::select! {
                     _ = time::sleep(Duration::from_secs(1)) => {},
                     _ = shutdown.cancelled() => {
@@ -246,55 +285,32 @@ async fn run_handler_loop(
                     }
                 }
 
-                if handler.probe_game_process(context)? {
+                if runner.game_is_alive()? {
                     continue;
                 }
 
-                log::info!("detected game exit for app {}", context.handler_appid);
+                log::info!("detected game exit for app {appid}");
                 state = RunnerState::CleanUp;
             }
             RunnerState::CleanUp => {
-                log::info!("runner state=CleanUp for app {}", context.handler_appid);
+                log::info!("runner state=CleanUp for app {appid}");
                 if helper_started {
-                    handler.cleanup(context).await?;
+                    runner.cleanup().await;
                     helper_started = false;
                 }
 
                 state = RunnerState::Completed;
             }
             RunnerState::Completed => {
-                log::info!("runner state=Completed for app {}", context.handler_appid);
+                log::info!("runner state=Completed for app {appid}");
                 return Ok(());
             }
             RunnerState::Failed => {
-                log::info!("runner state=Failed for app {}", context.handler_appid);
+                log::info!("runner state=Failed for app {appid}");
                 return Err(failure
                     .take()
                     .unwrap_or_else(|| anyhow::anyhow!("runner entered failed state")));
             }
         }
-    }
-}
-
-#[async_trait(?Send)]
-trait AppHandler {
-    fn setup(&mut self, _context: &AppContext) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    fn on_start(&mut self, _context: &AppContext) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn cleanup(&mut self, _context: &AppContext) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    fn startup_timeout(&self) -> Duration {
-        Duration::from_secs(120)
-    }
-
-    fn probe_game_process(&mut self, _context: &AppContext) -> anyhow::Result<bool> {
-        Ok(false)
     }
 }
