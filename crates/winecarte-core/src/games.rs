@@ -315,4 +315,36 @@ pub static GAMES: &[Game] = &[
         from_linux_args: &["--from-linux", r"$R3E|Local\$R3E"],
         link_sibling_dirs: false,
     },
+    // The remaining games publish telemetry over UDP, which already reaches
+    // the SimHub prefix, but SimHub only detects a game by a process running
+    // there. Their receivers run wine2linux with --stand-in so SimHub sees
+    // the game without bridging any mappings; there is nothing to send.
+    Game {
+        name: "dirt-rally-2",
+        steam_appids: &[],
+        process_names: &["dirtrally2.exe"],
+        launcher_names: &[],
+        from_wine_args: &[],
+        from_linux_args: &["--stand-in"],
+        link_sibling_dirs: false,
+    },
+    Game {
+        name: "beamng-drive",
+        steam_appids: &[],
+        // The native Linux build is detected too; its stand-in gets `.exe`.
+        process_names: &["BeamNG.drive.x64.exe", "BeamNG.drive.x64"],
+        launcher_names: &[],
+        from_wine_args: &[],
+        from_linux_args: &["--stand-in"],
+        link_sibling_dirs: false,
+    },
+    Game {
+        name: "wreckfest-2",
+        steam_appids: &[],
+        process_names: &["Wreckfest2.exe"],
+        launcher_names: &[],
+        from_wine_args: &[],
+        from_linux_args: &["--stand-in"],
+        link_sibling_dirs: false,
+    },
 ];

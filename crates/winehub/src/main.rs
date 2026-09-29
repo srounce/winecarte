@@ -4,7 +4,6 @@ use std::{
     env,
     path::{Path, PathBuf},
     process::Stdio,
-    str,
 };
 use tokio::{
     io::AsyncBufReadExt,
@@ -13,9 +12,7 @@ use tokio::{
     time,
 };
 use tokio_util::sync::CancellationToken;
-
-mod games;
-use games::{GAMES, GameBridge, GameContext};
+use winecarte_core::{games::Game, launch, procscan};
 
 /// Bridge directories live inside the prefix so the fake game exe gets a real
 /// `C:\` path, and so tools that inspect it are looking at a stable location
@@ -35,7 +32,7 @@ struct Args {
     wine: String,
 
     /// Path to wine2linux.exe. Falls back to $WINECARTE_WINE2LINUX_EXE, then a
-    /// copy alongside winehub.exe, then PATH.
+    /// copy alongside winehub, then PATH.
     #[arg(long, env = "WINECARTE_WINE2LINUX_EXE")]
     wine2linux: Option<PathBuf>,
 
@@ -49,9 +46,9 @@ struct Args {
 }
 
 struct Bridge {
-    game: &'static GameBridge,
-    context: GameContext,
-    process: process::Child,
+    pid: u32,
+    /// wine2linux in the SimHub prefix, mirroring /dev/shm into Win32 mappings.
+    receiver: process::Child,
 }
 
 #[tokio::main]
@@ -87,7 +84,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let wine2linux_exe = resolve_wine2linux_exe(args.wine2linux)?;
+    let wine2linux_exe = launch::resolve_wine2linux_exe(args.wine2linux)?;
     log::info!("using wine2linux: {}", wine2linux_exe.display());
     log::info!("using wine prefix: {}", prefix.display());
 
@@ -120,20 +117,26 @@ async fn main() -> anyhow::Result<()> {
             break;
         }
 
-        if active.is_some() {
-            let pid = active.as_ref().unwrap().context.pid;
-            if !is_pid_alive(pid) {
-                log::info!("game process {pid} exited, stopping bridge");
+        match &active {
+            Some(bridge) if !is_pid_alive(bridge.pid) => {
+                log::info!("game process {} exited, stopping bridge", bridge.pid);
                 cleanup_bridge(active.take().unwrap()).await;
             }
-        } else if let Some((pid, argv0, game)) = find_game_process() {
-            log::info!("detected {} process: {argv0} (pid {pid})", game.name);
-            match start_bridge(game, pid, &argv0, &prefix, &args.wine, &wine2linux_exe).await {
-                Ok(bridge) => {
-                    log::info!("bridge running for {argv0}");
-                    active = Some(bridge);
+            Some(_) => {}
+            None => {
+                if let Some((proc, game)) = find_game_process() {
+                    let argv0 = proc.argv0();
+                    log::info!("detected {} process: {argv0} (pid {})", game.name, proc.pid);
+                    match start_bridge(game, proc.pid, argv0, &prefix, &args.wine, &wine2linux_exe)
+                        .await
+                    {
+                        Ok(bridge) => {
+                            log::info!("bridge running for {argv0}");
+                            active = Some(bridge);
+                        }
+                        Err(e) => log::error!("failed to start bridge: {e:#}"),
+                    }
                 }
-                Err(e) => log::error!("failed to start bridge: {e:#}"),
             }
         }
 
@@ -146,62 +149,18 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn find_game_process() -> Option<(u32, String, &'static GameBridge)> {
-    let proc_dir = match std::fs::read_dir("/proc") {
-        Ok(d) => d,
+/// Bridge stand-ins are named after the game exe and wine2linux runs from the
+/// game's session, so both would otherwise be taken for the game itself.
+fn find_game_process() -> Option<(procscan::Process, &'static Game)> {
+    match procscan::find_game_process(Path::new("/proc"), |argv0| {
+        is_bridge_exe(argv0) || procscan::exe_matches(argv0, procscan::WINE2LINUX_EXE)
+    }) {
+        Ok(found) => found,
         Err(e) => {
             log::warn!("failed to read /proc: {e}");
-            return None;
-        }
-    };
-
-    for entry in proc_dir.flatten() {
-        if !entry
-            .file_name()
-            .to_string_lossy()
-            .bytes()
-            .all(|b| b.is_ascii_digit())
-        {
-            continue;
-        }
-
-        let cmdline = match std::fs::read(entry.path().join("cmdline")) {
-            Ok(data) => data,
-            Err(_) => continue,
-        };
-
-        if cmdline.is_empty() {
-            continue;
-        }
-
-        let argv0_bytes = cmdline.split(|&b| b == 0).next().unwrap_or(&[]);
-        let argv0 = match str::from_utf8(argv0_bytes) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-
-        if is_bridge_exe(argv0) {
-            continue;
-        }
-
-        for game in GAMES {
-            if game.process_names.iter().any(|&m| exe_matches(argv0, m)) {
-                let pid: u32 = match entry.file_name().to_string_lossy().parse() {
-                    Ok(p) => p,
-                    Err(_) => continue,
-                };
-                return Some((pid, argv0.to_string(), game));
-            }
+            None
         }
     }
-
-    None
-}
-
-fn exe_matches(argv0: &str, marker: &str) -> bool {
-    argv0 == marker
-        || argv0.ends_with(&format!("\\{marker}"))
-        || argv0.ends_with(&format!("/{marker}"))
 }
 
 fn is_pid_alive(pid: u32) -> bool {
@@ -209,7 +168,7 @@ fn is_pid_alive(pid: u32) -> bool {
 }
 
 async fn start_bridge(
-    game: &'static GameBridge,
+    game: &'static Game,
     pid: u32,
     argv0: &str,
     prefix: &Path,
@@ -257,26 +216,6 @@ async fn start_bridge(
     std::fs::copy(wine2linux_exe, &bridge_exe)
         .with_context(|| format!("failed to copy wine2linux.exe to {}", bridge_exe.display()))?;
 
-    let context = GameContext {
-        pid,
-        exe_path: exe_path.unwrap_or_default(),
-        install_dir: install_dir.unwrap_or_default(),
-        bridge_dir: bridge_dir.clone(),
-        compat_data_path: read_compat_data_path(pid),
-    };
-
-    if let Some(cdp) = &context.compat_data_path {
-        log::info!("game compat data path: {}", cdp.display());
-    }
-
-    if let Some(setup) = game.setup {
-        log::info!("running game setup hook");
-        if let Err(e) = setup(&context) {
-            let _ = std::fs::remove_dir_all(&bridge_dir);
-            return Err(e.context("game setup hook failed"));
-        }
-    }
-
     let bridge_exe_wine = bridge_exe_dos_path(game.name, &exe_name);
     let mut command = process::Command::new(wine);
     command
@@ -293,22 +232,12 @@ async fn start_bridge(
 
     log::info!("launching: {wine} {bridge_exe_wine}");
     log::info!("bridge args: {:?}", game.from_linux_args);
-    let mut child = command
+    let mut receiver = command
         .spawn()
         .context("failed to spawn wine bridge process")?;
+    forward_child_output(&mut receiver, "receiver");
 
-    if let Some(stdout) = child.stdout.take() {
-        tokio::spawn(forward_wine_output(stdout));
-    }
-    if let Some(stderr) = child.stderr.take() {
-        tokio::spawn(forward_wine_output(stderr));
-    }
-
-    Ok(Bridge {
-        game,
-        context,
-        process: child,
-    })
+    Ok(Bridge { pid, receiver })
 }
 
 fn bridge_root(prefix: &Path) -> PathBuf {
@@ -400,30 +329,28 @@ fn flatpak_dev_shm_dir() -> Option<PathBuf> {
     path.exists().then_some(path)
 }
 
-async fn forward_wine_output<R>(reader: R)
+fn forward_child_output(child: &mut process::Child, target: &'static str) {
+    if let Some(stdout) = child.stdout.take() {
+        tokio::spawn(forward_wine_output(stdout, target));
+    }
+    if let Some(stderr) = child.stderr.take() {
+        tokio::spawn(forward_wine_output(stderr, target));
+    }
+}
+
+async fn forward_wine_output<R>(reader: R, target: &'static str)
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
     let mut lines = tokio::io::BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
-        log::info!(target: "wine", "{line}");
+        log::info!(target: target, "{line}");
     }
 }
 
 async fn cleanup_bridge(mut bridge: Bridge) {
-    log::info!("stopping bridge for pid {}", bridge.context.pid);
-    if let Err(e) = bridge.process.start_kill() {
-        log::warn!("failed to kill bridge process: {e}");
-    } else {
-        let _ = bridge.process.wait().await;
-    }
-
-    if let Some(teardown) = bridge.game.teardown {
-        log::info!("running game teardown hook");
-        if let Err(e) = teardown(&bridge.context) {
-            log::warn!("teardown hook failed: {e:#}");
-        }
-    }
+    log::info!("stopping bridge for pid {}", bridge.pid);
+    launch::stop_wine2linux(&mut bridge.receiver).await;
 
     // The bridge dir deliberately outlives the session: tools that act on game
     // exit still resolve paths through it after winehub has moved on.
@@ -460,44 +387,4 @@ fn wine_argv0_to_linux_path(argv0: &str) -> Option<PathBuf> {
     } else {
         None
     }
-}
-
-fn read_compat_data_path(pid: u32) -> Option<PathBuf> {
-    let data = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
-    data.split(|&b| b == 0).find_map(|entry| {
-        let s = str::from_utf8(entry).ok()?;
-        s.strip_prefix("STEAM_COMPAT_DATA_PATH=").map(PathBuf::from)
-    })
-}
-
-fn resolve_wine2linux_exe(override_path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
-    if let Some(path) = override_path {
-        if path.exists() {
-            return Ok(path.canonicalize().unwrap_or(path));
-        }
-        anyhow::bail!("wine2linux path does not exist: {}", path.display());
-    }
-
-    // Prefer a sibling build so a winehub copy stays paired with its own
-    // wine2linux rather than whichever one happens to be installed on PATH.
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            let candidate = exe_dir.join("wine2linux.exe");
-            if candidate.is_file() {
-                return Ok(candidate.canonicalize().unwrap_or(candidate));
-            }
-        }
-    }
-
-    let path_env = env::var_os("PATH").unwrap_or_default();
-    for dir in env::split_paths(&path_env) {
-        let candidate = dir.join("wine2linux.exe");
-        if candidate.is_file() {
-            return Ok(candidate.canonicalize().unwrap_or(candidate));
-        }
-    }
-
-    anyhow::bail!(
-        "could not find wine2linux.exe! Set WINECARTE_WINE2LINUX_EXE, --wine2linux, add to PATH, or place alongside winehub"
-    )
 }

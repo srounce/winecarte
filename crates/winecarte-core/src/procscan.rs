@@ -238,11 +238,16 @@ mod tests {
     }
 
     #[test]
-    fn every_game_has_an_appid_and_process_name() {
+    fn game_table_is_consistent() {
         for game in games::GAMES {
-            assert!(!game.steam_appids.is_empty(), "{}", game.name);
             assert!(!game.process_names.is_empty(), "{}", game.name);
-            assert!(games::by_appid(game.steam_appids[0]).is_some_and(|g| g.name == game.name));
+            // A sender needs a Steam session to run in, so games without an
+            // appid are stand-ins only.
+            if game.steam_appids.is_empty() {
+                assert!(game.from_wine_args.is_empty(), "{}", game.name);
+            } else {
+                assert!(games::by_appid(game.steam_appids[0]).is_some_and(|g| g.name == game.name));
+            }
         }
     }
 }

@@ -868,6 +868,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+ "winecarte-core",
 ]
 
 [[package]]

@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
+winecarte-core = { path = "../winecarte-core" }
 thiserror = "2"
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
