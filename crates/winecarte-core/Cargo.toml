@@ -1,0 +1,15 @@
+[package]
+name = "winecarte-core"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+log = "0.4"
+
+[dependencies.tokio]
+version = "1"
+features = ["process"]
+
+[dev-dependencies]
+tempfile = "3"

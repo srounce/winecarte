@@ -856,6 +856,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "winecarte-core"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "winecarte-run"
 version = "0.5.0"
 dependencies = [
