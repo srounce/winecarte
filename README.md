@@ -85,6 +85,19 @@ Once the game is running, the shared memory files appear under `/dev/shm`. For e
 
 Any Linux application can read these files directly.
 
+## winehub
+
+`winehub` is for setups where a Windows tool such as SimHub or CrewChief runs in its own Wine prefix and needs the telemetry back as Win32 mappings. It is a native Linux daemon that polls `/proc` for supported games and, per game, starts two `wine2linux.exe` instances:
+
+- a **receiver** in the tool's prefix (`--prefix`, or `$WINEPREFIX`), mirroring `/dev/shm` into Win32 mappings
+- a **sender** inside the game's own Proton session, mirroring the game's mappings into `/dev/shm`
+
+The sender is started by joining the game container's user and mount namespaces directly, so no Steam launch options are required on native Steam. If that is refused (Steam installs where bubblewrap runs setuid, or Flatpak Steam), winehub falls back to `steam-runtime-launch-client` when the game was launched with `STEAM_COMPAT_LAUNCHER_SERVICE=proton`, and otherwise runs the receiver only. A sender already running for the game's prefix, such as one from `winecarte-run`, is left alone.
+
+```
+winehub --prefix ~/simhub-pfx
+```
+
 ## Building from source
 
 Requires Rust 1.95+ and the following cross-compilation tools:
@@ -115,4 +128,4 @@ Alternatively, use `just build-all --release` if you have [just](https://github.
 |---|---|
 | `WINECARTE_WINE2LINUX_EXE` | Override path to `wine2linux.exe`. Unnecessary if it is on `PATH`. |
 | `WINECARTE_RUNTIME_LAUNCH_CLIENT` | Path to `steam-runtime-launch-client`. Auto-detected from `STEAM_COMPAT_TOOL_PATHS` if unset. |
-| `WINECARTE_LOG_LEVEL` | Log level for `winecarte-run`. Defaults to `warn`. |
+| `WINECARTE_LOG_LEVEL` | Log level for `winecarte-run` (default `warn`) and `winehub` (default `info`). |

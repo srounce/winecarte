@@ -14,6 +14,8 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use winecarte_core::{games::Game, launch, procscan};
 
+mod sender;
+
 /// Bridge directories live inside the prefix so the fake game exe gets a real
 /// `C:\` path, and so tools that inspect it are looking at a stable location
 /// that outlives any single session.
@@ -49,6 +51,10 @@ struct Bridge {
     pid: u32,
     /// wine2linux in the SimHub prefix, mirroring /dev/shm into Win32 mappings.
     receiver: process::Child,
+    /// wine2linux in the game's session, mirroring its mappings into /dev/shm.
+    /// Absent when the game already has one (winecarte-run) or none could be
+    /// started.
+    sender: Option<process::Child>,
 }
 
 #[tokio::main]
@@ -237,7 +243,16 @@ async fn start_bridge(
         .context("failed to spawn wine bridge process")?;
     forward_child_output(&mut receiver, "receiver");
 
-    Ok(Bridge { pid, receiver })
+    let mut sender = sender::launch(game, pid, wine2linux_exe);
+    if let Some(child) = &mut sender {
+        forward_child_output(child, "sender");
+    }
+
+    Ok(Bridge {
+        pid,
+        receiver,
+        sender,
+    })
 }
 
 fn bridge_root(prefix: &Path) -> PathBuf {
@@ -348,8 +363,13 @@ where
     }
 }
 
+/// The sender goes first so wineserver has released its handles on the
+/// /dev/shm files before a restarted game's sender reopens them.
 async fn cleanup_bridge(mut bridge: Bridge) {
     log::info!("stopping bridge for pid {}", bridge.pid);
+    if let Some(mut sender) = bridge.sender.take() {
+        launch::stop_wine2linux(&mut sender).await;
+    }
     launch::stop_wine2linux(&mut bridge.receiver).await;
 
     // The bridge dir deliberately outlives the session: tools that act on game
