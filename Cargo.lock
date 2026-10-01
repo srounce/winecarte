@@ -823,7 +823,7 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "wine2linux"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -835,7 +835,7 @@ dependencies = [
 
 [[package]]
 name = "winecarte-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "log",
@@ -845,7 +845,7 @@ dependencies = [
 
 [[package]]
 name = "winecarte-run"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -859,7 +859,7 @@ dependencies = [
 
 [[package]]
 name = "winehub"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "clap",
