@@ -114,6 +114,8 @@ fn launch_in_namespaces(
         .args(args)
         .env_clear()
         .envs(env.iter().map(|(k, v)| (k.as_os_str(), v.as_os_str())))
+        .env_remove("WINESERVERSOCKET")
+        .env_remove("WINEPRELOADRESERVE")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     // Set by wine's preloader for the process it execs, and inherited by the
