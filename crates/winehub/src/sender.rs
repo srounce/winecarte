@@ -28,21 +28,23 @@ const PROC: &str = "/proc";
 
 /// Returns the running sender, or None when one could not be started; the
 /// receiver is still useful on its own, so this never fails the bridge.
-pub fn launch(game: &Game, pid: u32, wine2linux_exe: &Path) -> Option<process::Child> {
+pub fn launch(
+    game: &Game,
+    pid: u32,
+    env: Option<&[(OsString, OsString)]>,
+    wine2linux_exe: &Path,
+) -> Option<process::Child> {
     if game.from_wine_args.is_empty() {
         log::info!("{} has nothing to send; receiver only", game.name);
         return None;
     }
 
-    let env = match procscan::read_environ(pid) {
-        Some(env) => env,
-        None => {
-            log::warn!("cannot read environment of pid {pid}; not starting sender");
-            return None;
-        }
+    let Some(env) = env else {
+        log::warn!("no environment for pid {pid}; not starting sender");
+        return None;
     };
 
-    let prefix = match procscan::wine_prefix_of(&env) {
+    let prefix = match procscan::wine_prefix_of(env) {
         Some(p) => p,
         None => {
             log::warn!(
@@ -64,7 +66,7 @@ pub fn launch(game: &Game, pid: u32, wine2linux_exe: &Path) -> Option<process::C
         Err(e) => log::warn!("failed to scan for an existing sender: {e}"),
     }
 
-    match launch_in_namespaces(pid, &env, wine2linux_exe, game.from_wine_args) {
+    match launch_in_namespaces(pid, env, wine2linux_exe, game.from_wine_args) {
         Ok(child) => {
             log::info!("sender running inside the game's namespaces");
             return Some(child);
@@ -72,7 +74,7 @@ pub fn launch(game: &Game, pid: u32, wine2linux_exe: &Path) -> Option<process::C
         Err(e) => log::warn!("could not start sender in the game's namespaces: {e:#}"),
     }
 
-    match launch_via_launcher_service(&env, wine2linux_exe, game.from_wine_args) {
+    match launch_via_launcher_service(env, wine2linux_exe, game.from_wine_args) {
         Ok(Some(child)) => {
             log::info!("sender running via steam-runtime-launch-client");
             Some(child)

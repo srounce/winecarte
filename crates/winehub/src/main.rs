@@ -2,6 +2,7 @@ use anyhow::Context;
 use clap::Parser;
 use std::{
     env,
+    ffi::OsString,
     path::{Path, PathBuf},
     process::Stdio,
 };
@@ -184,7 +185,13 @@ async fn start_bridge(
     let exe_name = stand_in_exe_name(argv0);
     let bridge_dir = bridge_root(prefix).join(game.name);
 
-    let exe_path = wine_argv0_to_linux_path(argv0);
+    let game_env = procscan::read_environ(pid);
+    if game_env.is_none() {
+        log::warn!("cannot read environment of pid {pid}");
+    }
+    let game_prefix = game_env.as_deref().and_then(game_prefix_of);
+
+    let exe_path = wine_argv0_to_linux_path(argv0, game_prefix.as_deref());
     let install_dir = exe_path
         .as_deref()
         .and_then(Path::parent)
@@ -243,7 +250,7 @@ async fn start_bridge(
         .context("failed to spawn wine bridge process")?;
     forward_child_output(&mut receiver, "receiver");
 
-    let mut sender = sender::launch(game, pid, wine2linux_exe);
+    let mut sender = sender::launch(game, pid, game_env.as_deref(), wine2linux_exe);
     if let Some(child) = &mut sender {
         forward_child_output(child, "sender");
     }
@@ -395,16 +402,136 @@ fn stand_in_exe_name(argv0: &str) -> String {
     }
 }
 
-fn wine_argv0_to_linux_path(argv0: &str) -> Option<PathBuf> {
+/// The wine prefix the game runs in. Plain wine without WINEPREFIX uses
+/// ~/.wine, which is enough to look up drive letters even though the sender
+/// insists on an explicit prefix.
+fn game_prefix_of(env: &[(OsString, OsString)]) -> Option<PathBuf> {
+    procscan::wine_prefix_of(env)
+        .or_else(|| procscan::env_value(env, "HOME").map(|home| Path::new(home).join(".wine")))
+}
+
+/// Maps argv0 as wine reports it onto the host filesystem. Drive letters are
+/// resolved through the game prefix's dosdevices links: Proton assigns letters
+/// to extra Steam libraries, so nothing beyond C: and Z: can be assumed, and
+/// even those are only conventions.
+fn wine_argv0_to_linux_path(argv0: &str, game_prefix: Option<&Path>) -> Option<PathBuf> {
     let argv0 = argv0.trim_matches('"');
-    if let Some(rest) = argv0
-        .strip_prefix("Z:\\")
-        .or_else(|| argv0.strip_prefix("z:\\"))
-    {
-        Some(PathBuf::from("/").join(rest.replace('\\', "/")))
-    } else if argv0.starts_with('/') {
-        Some(PathBuf::from(argv0))
-    } else {
-        None
+    if argv0.starts_with('/') {
+        return Some(PathBuf::from(argv0));
+    }
+
+    let (drive, rest) = split_drive(argv0)?;
+    let Some(prefix) = game_prefix else {
+        log::warn!("cannot resolve drive {drive}: without the game's wine prefix");
+        return None;
+    };
+
+    let link = prefix
+        .join("dosdevices")
+        .join(format!("{}:", drive.to_ascii_lowercase()));
+    // canonicalize follows the link and absolutises the relative targets wine
+    // writes for drives inside the prefix, such as `../drive_c`.
+    let root = match std::fs::canonicalize(&link) {
+        Ok(root) => root,
+        Err(e) => {
+            log::warn!("cannot resolve drive {drive}: via {}: {e}", link.display());
+            return None;
+        }
+    };
+    Some(root.join(rest.replace('\\', "/")))
+}
+
+/// Splits `X:\rest` into the drive letter and the path below it.
+fn split_drive(path: &str) -> Option<(char, &str)> {
+    let mut chars = path.chars();
+    let drive = chars.next().filter(char::is_ascii_alphabetic)?;
+    if chars.next() != Some(':') {
+        return None;
+    }
+    Some((drive, chars.as_str().strip_prefix(['\\', '/'])?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    fn prefix_with_drives(drives: &[(&str, &Path)]) -> tempfile::TempDir {
+        let prefix = tempfile::tempdir().unwrap();
+        let dosdevices = prefix.path().join("dosdevices");
+        std::fs::create_dir_all(prefix.path().join("drive_c")).unwrap();
+        std::fs::create_dir(&dosdevices).unwrap();
+        symlink("../drive_c", dosdevices.join("c:")).unwrap();
+        symlink("/", dosdevices.join("z:")).unwrap();
+        for (letter, target) in drives {
+            symlink(target, dosdevices.join(format!("{letter}:"))).unwrap();
+        }
+        prefix
+    }
+
+    #[test]
+    fn linux_argv0_passes_through() {
+        assert_eq!(
+            wine_argv0_to_linux_path("/games/Game/Game.exe", None),
+            Some(PathBuf::from("/games/Game/Game.exe"))
+        );
+    }
+
+    #[test]
+    fn extra_drive_resolves_through_dosdevices() {
+        let library = tempfile::tempdir().unwrap();
+        let prefix = prefix_with_drives(&[("s", library.path())]);
+        let expected = library
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("steamapps/common/Game/Game.exe");
+        assert_eq!(
+            wine_argv0_to_linux_path(r"S:\steamapps\common\Game\Game.exe", Some(prefix.path())),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn relative_drive_link_resolves_inside_prefix() {
+        let prefix = prefix_with_drives(&[]);
+        let expected = prefix
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("drive_c/Program Files/Game/Game.exe");
+        assert_eq!(
+            wine_argv0_to_linux_path(r"c:\Program Files\Game\Game.exe", Some(prefix.path())),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn z_drive_is_not_assumed() {
+        let other = tempfile::tempdir().unwrap();
+        let prefix = prefix_with_drives(&[("y", other.path())]);
+        let expected = other.path().canonicalize().unwrap().join("Game/Game.exe");
+        assert_eq!(
+            wine_argv0_to_linux_path(r"Y:\Game\Game.exe", Some(prefix.path())),
+            Some(expected)
+        );
+        assert_eq!(
+            wine_argv0_to_linux_path(r"Z:\Game\Game.exe", Some(prefix.path())),
+            Some(PathBuf::from("/Game/Game.exe"))
+        );
+    }
+
+    #[test]
+    fn unmapped_drive_or_missing_prefix_is_none() {
+        let prefix = prefix_with_drives(&[]);
+        assert_eq!(
+            wine_argv0_to_linux_path(r"S:\Game\Game.exe", Some(prefix.path())),
+            None
+        );
+        assert_eq!(wine_argv0_to_linux_path(r"S:\Game\Game.exe", None), None);
+        assert_eq!(
+            wine_argv0_to_linux_path("Game.exe", Some(prefix.path())),
+            None
+        );
     }
 }

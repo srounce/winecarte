@@ -12,6 +12,9 @@ clap = { version = "4", features = ["derive", "env"] }
 env_logger = "0.11"
 log = "0.4"
 
+[dev-dependencies]
+tempfile = "3"
+
 [dependencies.tokio]
 version = "1"
 features = ["rt", "macros", "rt-multi-thread", "fs", "process", "io-std", "io-util", "signal", "time"]

@@ -866,6 +866,7 @@ dependencies = [
  "env_logger",
  "libc",
  "log",
+ "tempfile",
  "thiserror",
  "tokio",
  "tokio-util",
