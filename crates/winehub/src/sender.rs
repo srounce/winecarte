@@ -108,6 +108,24 @@ fn launch_in_namespaces(
     // right wine for its prefix. Proton exports it; plain wine may not.
     let program = procscan::env_value(env, "WINELOADER")
         .map(PathBuf::from)
+        .or_else(|| {
+            procscan::env_value(env, "STEAM_COMPAT_TOOL_PATHS")
+                .and_then(|v| v.to_str().map(ToOwned::to_owned))
+                .and_then(|paths| {
+                    paths.split(':').find_map(|p| {
+                        let base = Path::new(p);
+                        let candidate = base.join("files/bin/wine");
+                        if candidate.is_file() {
+                            return Some(candidate);
+                        }
+                        let candidate = base.join("bin/wine");
+                        if candidate.is_file() {
+                            return Some(candidate);
+                        }
+                        None
+                    })
+                })
+        })
         .unwrap_or_else(|| PathBuf::from("wine"));
 
     let mut command = process::Command::new(&program);

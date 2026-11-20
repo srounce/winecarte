@@ -83,6 +83,13 @@ struct Args {
     #[arg(long)]
     event: Option<String>,
 
+    /// Optional Win32 event name to signal after each mirror update.
+    /// Lets a receiver wake readers that wait on the game's per-tick data
+    /// event (e.g. iRacing's Local\IRSDKDataValidEvent) instead of relying
+    /// on interval polling alone.
+    #[arg(long = "signal-event")]
+    signal_event: Option<String>,
+
     /// Run a single poll iteration and exit.
     #[arg(long, default_value_t = false)]
     once: bool,
@@ -757,6 +764,22 @@ fn open_named_event(event_name: &str) -> anyhow::Result<NamedEventHandle> {
     Ok(NamedEventHandle(event))
 }
 
+/// Open the named event for signalling, creating it when no publisher made
+/// it yet. Auto-reset like the game's own per-tick event, so each SetEvent
+/// releases exactly one waiting read.
+fn open_or_create_signalling_event(event_name: &str) -> anyhow::Result<NamedEventHandle> {
+    let wide_name = encode_wide_null(event_name);
+    // CreateEventW opens the existing named event when there is one, so this
+    // works whether the reader or this process created the event first.
+    let event = unsafe { CreateEventW(std::ptr::null(), 0, 0, wide_name.as_ptr()) };
+    if event.is_null() {
+        return Err(io::Error::last_os_error())
+            .with_context(|| format!("failed to open or create signalling event {event_name}"));
+    }
+
+    Ok(NamedEventHandle(event))
+}
+
 fn encode_wide_null(value: &str) -> Vec<u16> {
     let mut wide = std::ffi::OsStr::new(value)
         .encode_wide()
@@ -964,22 +987,29 @@ fn read_from_linux_exact(path: &Path, buffer: &mut [u8]) -> Result<(), ReadFromL
 }
 
 fn wait_for_event_signal(event_name: &str, interval: Duration) -> anyhow::Result<bool> {
-    let event = open_named_event(event_name)?;
+    if shutdown_requested() {
+        return Ok(false);
+    }
+
     let timeout_ms = interval.as_millis().clamp(1, u32::MAX as u128) as u32;
 
-    loop {
-        if shutdown_requested() {
-            return Ok(false);
+    // The game creates and destroys its event alongside the shared memory,
+    // so between sessions the event is gone; fall back to interval polling
+    // until it comes back instead of taking the bridge down.
+    let event = match open_named_event(event_name) {
+        Ok(event) => event,
+        Err(error) => {
+            debug!("event not available yet ({error:#}); polling on interval instead");
+            thread::sleep(interval);
+            return Ok(true);
         }
+    };
 
-        let result = unsafe { WaitForSingleObject(event.0, timeout_ms) };
-        match result {
-            WAIT_OBJECT_0 | WAIT_TIMEOUT => return Ok(true),
-            _ => {
-                return Err(io::Error::last_os_error())
-                    .with_context(|| format!("failed while waiting for event {event_name}"));
-            }
-        }
+    let result = unsafe { WaitForSingleObject(event.0, timeout_ms) };
+    match result {
+        WAIT_OBJECT_0 | WAIT_TIMEOUT => Ok(true),
+        _ => Err(io::Error::last_os_error())
+            .with_context(|| format!("failed while waiting for event {event_name}")),
     }
 }
 
@@ -1224,6 +1254,12 @@ fn main() -> anyhow::Result<()> {
     let mut pending_from_linux = from_linux_targets;
     let mut from_linux_states: Vec<FromLinuxState> = Vec::new();
 
+    let mut signal_event: Option<NamedEventHandle> = None;
+    let mut signal_event_warning_logged = false;
+    if let Some(event_name) = args.signal_event.as_deref() {
+        info!("will signal event {event_name} after each mirror update");
+    }
+
     let source_scan_interval = Duration::from_secs(1);
     let mut last_source_scan = Instant::now() - source_scan_interval;
 
@@ -1280,6 +1316,31 @@ fn main() -> anyhow::Result<()> {
             for state in &mut from_linux_states {
                 if copy_from_linux_if_changed(state)? {
                     copied_count += 1;
+                }
+            }
+
+            if let Some(event_name) = args.signal_event.as_deref() {
+                if !from_linux_states.is_empty() {
+                    if signal_event.is_none() {
+                        match open_or_create_signalling_event(event_name) {
+                            Ok(handle) => signal_event = Some(handle),
+                            Err(error) => {
+                                if !signal_event_warning_logged {
+                                    warn!("waiting to signal event {event_name}: {error:#}");
+                                    signal_event_warning_logged = true;
+                                }
+                            }
+                        }
+                    }
+                    if let Some(handle) = &signal_event {
+                        if unsafe { SetEvent(handle.0) } == 0 {
+                            warn!(
+                                "failed to signal event {event_name}: {}",
+                                io::Error::last_os_error()
+                            );
+                            signal_event = None;
+                        }
+                    }
                 }
             }
 
@@ -1368,5 +1429,21 @@ mod tests {
         assert_eq!(mapping.linux_path, "foo/bar");
         assert_eq!(mapping.mapping_name, "bar");
         assert_eq!(mapping.size, None);
+    }
+
+    #[test]
+    fn parses_signal_event_arg() {
+        let args = <super::Args as clap::Parser>::try_parse_from([
+            "wine2linux",
+            "--from-linux",
+            r"irsdk_mirror|Local\IRSDKMemMapFileName|1191936",
+            "--signal-event",
+            r"Local\IRSDKDataValidEvent",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.signal_event.as_deref(),
+            Some(r"Local\IRSDKDataValidEvent")
+        );
     }
 }
