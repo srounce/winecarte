@@ -192,6 +192,29 @@ pub static GAMES: &[Game] = &[
         from_linux_args: ACPMF_FROM_LINUX,
         link_sibling_dirs: false,
     },
+    // irsdk publishes one fixed-size (1164 KiB = 1191936 bytes) section, so
+    // the receiver recreates it with that explicit size. Readers like
+    // SimHub's wait on DataValidEvent instead of polling, so the sender
+    // waits on it and the receiver re-signals it after each mirror update.
+    Game {
+        name: "iracing",
+        steam_appids: &["266410"],
+        process_names: &["iRacingSim64DX11.exe"],
+        launcher_names: &["iRacingLauncher64.exe"],
+        from_wine_args: &[
+            "--from-wine",
+            r"Local\IRSDKMemMapFileName|irsdk_mirror",
+            "--event",
+            r"Local\IRSDKDataValidEvent",
+        ],
+        from_linux_args: &[
+            "--from-linux",
+            r"irsdk_mirror|Local\IRSDKMemMapFileName|1191936",
+            "--signal-event",
+            r"Local\IRSDKDataValidEvent",
+        ],
+        link_sibling_dirs: false,
+    },
     Game {
         name: "rfactor2",
         steam_appids: &["365960"],

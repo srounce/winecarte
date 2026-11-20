@@ -279,9 +279,10 @@ fn bridge_exe_dos_path(game_name: &str, exe_name: &str) -> String {
 /// a restart while an earlier bridge is still alive — bridges the bridge.
 /// Matching on the DOS path catches bridges from any prefix, not just ours.
 fn is_bridge_exe(argv0: &str) -> bool {
-    argv0
-        .to_ascii_lowercase()
-        .starts_with(&format!(r"c:\{BRIDGE_DIR_NAME}\"))
+    let lower = argv0.to_ascii_lowercase();
+    lower.starts_with(&format!(r"c:\{BRIDGE_DIR_NAME}\"))
+        || lower.starts_with(r"c:\winecarte-bridge\")
+        || lower.contains(r"\winecarte")
 }
 
 /// Rebuild from scratch rather than reusing: unlinking leaves a previous

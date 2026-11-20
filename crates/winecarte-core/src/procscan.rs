@@ -250,4 +250,18 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn detects_iracing_by_process_and_launcher() {
+        let game = games::by_appid("266410").expect("iracing should be found by appid");
+        assert_eq!(game.name, "iracing");
+        assert!(game.matches_process("iRacingSim64DX11.exe"));
+        assert!(game.matches_process(r"C:\Program Files (x86)\iRacing\ui\..\iRacingSim64DX11.exe"));
+        assert!(!game.matches_process("iRacingLauncher64.exe"));
+        assert!(game.launcher_names.contains(&"iRacingLauncher64.exe"));
+        assert_eq!(
+            games::by_process("iRacingSim64DX11.exe").unwrap().name,
+            "iracing"
+        );
+    }
 }

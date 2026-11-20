@@ -82,6 +82,7 @@ winehub (Linux)
 | Assetto Corsa Competizione | 805550 | `acpmf_physics`, `acpmf_graphics`, `acpmf_static` |
 | Assetto Corsa Evo | 3058630 | `acevo_pmf_physics`, `acevo_pmf_graphics`, `acevo_pmf_static` |
 | Assetto Corsa Rally | 3917090 | `acpmf_physics`, `acpmf_graphics`, `acpmf_static` |
+| iRacing | 266410 | `irsdk_mirror` |
 | Le Mans Ultimate | 2399420 | `LMU_Data`, `$rFactor2SMMP_Telemetry$`, and related rFactor2 SMMP mappings |
 | rFactor2 | 365960 | `$rFactor2SMMP_Telemetry$`, and related rFactor2 SMMP mappings |
 | Project CARS 2 | 378860 | `$pcars2$` |
