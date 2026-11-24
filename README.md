@@ -90,7 +90,7 @@ winehub (Linux)
 | Euro Truck Simulator 2 | 227300 | `SHSCSTelemetry` |
 | American Truck Simulator | 270880 | `SHSCSTelemetry` |
 
-`winehub` also recognises DiRT Rally 2.0, BeamNG.drive (Windows and native Linux builds) and Wreckfest 2. These publish telemetry over UDP, so there is no shared memory to bridge. winehub only runs a stand-in process named after the game in the `--prefix` prefix, for tools that detect a game by its process name. `winecarte-run` does not handle them.
+`winehub` also recognises DiRT Rally 2.0, BeamNG.drive (Windows and native Linux builds), Wreckfest 2 and Forza Horizon 6. These publish telemetry over UDP, so there is no shared memory to bridge. winehub only runs a stand-in process named after the game in the `--prefix` prefix, for tools that detect a game by its process name. `winecarte-run` does not handle them.
 
 > [!WARNING]
 > **rFactor2 / Le Mans Ultimate**: Do not use Winecarte alongside **rF2SharedMemoryMapPlugin_Wine**. The Wine-specific version of the plugin already writes the shared memory files under `/dev/shm`, which conflicts with Winecarte attempting to write the same files. The original windows version of the plugin (or its various forks) can be used instead.

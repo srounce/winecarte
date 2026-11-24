@@ -347,4 +347,14 @@ pub static GAMES: &[Game] = &[
         from_linux_args: &["--stand-in"],
         link_sibling_dirs: false,
     },
+    Game {
+        name: "forza-horizon-6",
+        steam_appids: &[],
+        // Matching is case-sensitive and the Steam build's exe is lowercase.
+        process_names: &["forzahorizon6.exe"],
+        launcher_names: &[],
+        from_wine_args: &[],
+        from_linux_args: &["--stand-in"],
+        link_sibling_dirs: false,
+    },
 ];
